@@ -472,5 +472,7 @@ MIT — free to use, modify and distribute.
 ---
 
 <div align="center">
-Made for the Minecraft ChatTriggers community
+Made for the Minecraft Housing community.
+  
+   By MorgenBinIchRich
 </div>
