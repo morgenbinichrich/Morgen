@@ -1,0 +1,25 @@
+ITEM "minecraft:golden_shovel" {
+
+    Name: list("&cAspect of the Builder")
+    Amount: 1
+    Count: 1
+
+    Damage: 0
+    Unbreakable: false
+    Glow: false
+    HideFlags: 39  # Enchantments, AttributeModifiers, Unbreakable, Miscellaneous
+    # ItemModel: "none"
+
+    Stats {
+        # damage: static(10)
+        # speed:  linear(1, 0.5)
+    }
+
+    Lore: [list(
+        "&5&o&8Admin Item",
+        "&5&o&7",
+        "&5&o&7Ability: &6&lRIGHT CLICK",
+        "&5&o&9Teleports you 4 blocks forward"
+    )]
+
+}

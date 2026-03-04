@@ -1,0 +1,39 @@
+
+[general]
+	default_config_file = "items"
+	json_file_path = "items.json"
+	item_config_path = "items.mig"
+	chat_prefix = "&8[&6Morgen&8] &f"
+	quiet_mode = false
+
+[item_logic]
+	auto_unbreakable = false
+	default_stack_size = 1
+	default_hideflags = 63
+	auto-glow = false
+	smart_hideflags = true
+
+[advanced]
+	debug_logging = false
+	batch_delay = false
+	safe_mode = true
+	"batch_delay_(ticks)" = 0
+	"batch_delay_(ms)" = 0.0
+
+[export]
+	lore_format = 0
+	export_skull_texture = true
+	"lore_as_list()" = true
+	auto-open_after_export = true
+	"name_as_list()" = true
+	export_enchantments = true
+	name_format = 0
+	add_stats_placeholder = true
+
+[formatting]
+	"use_&_colour_codes" = true
+	strip_colour_on_export = false
+	decimal_precision = 1
+	chat_prefix = "&8[&6Morgen&8] &f"
+	colour_code_style = 0
+

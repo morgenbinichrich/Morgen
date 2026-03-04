@@ -1,0 +1,23 @@
+ITEM "minecraft:diamond_axe" {
+
+    Name: list("Diamond Axe")
+    Amount: 1
+    Count: 1
+
+    Damage: 0
+    Unbreakable: false
+    Glow: false
+    HideFlags: 63  # Enchantments, AttributeModifiers, Unbreakable, CanDestroy, CanPlaceOn, Miscellaneous
+    ItemModel: "minecraft:mace"
+
+    Stats {
+        # damage: static(10)
+        # speed:  linear(1, 0.5)
+    }
+
+    Lore: [list(
+        "",
+        "&9+6 Attack Damage"
+    )]
+
+}
