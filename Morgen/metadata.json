@@ -1,8 +1,0 @@
-{
-    "name": "Morgen",
-    "creator": "MorgenBinIchRich",
-    "description": "Generation of Items",
-    "version": "1.0.0",
-    "entry": "index.js",
-    "requires": ["CreativeTabs", "ChestMenu", "Axios", "RenderLibV2", "requestv2", "KeybindFix", "Vigilance"]
-}
