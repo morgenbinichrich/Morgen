@@ -134,7 +134,7 @@ function saveAsMig() {
         var file  = parts.pop() + ".mig";
         var dir   = "Morgen/imports" + (parts.length ? "/" + parts.join("/") : "");
 
-        var cc  = Settings.colorChar;
+        var cc  = "&";
         var mig = 'ITEM "' + state.itemId + '" {\n\n';
         mig += '    Name: "' + state.name.replace(/\u00a7/g,cc).replace(/"/g,'\\"') + '"\n';
         mig += "    Amount: 1\n";
@@ -170,12 +170,12 @@ function setStatus(s) { statusMsg = s; statusFlash = Date.now() + 2500; }
 // ─── Layout ───────────────────────────────────────────────────
 
 var PAD = 8, HDR = 28;
-var SECTION_W = 80, MIN_CONTENT_W = 260;
+var SECTION_W = 84, MIN_CONTENT_W = 290;
 
 function getLayout() {
     var sw = Renderer.screen.getWidth(), sh = Renderer.screen.getHeight();
     var pW = SECTION_W + MIN_CONTENT_W + PAD * 3;
-    var pH = Math.min(sh - 20, 340);
+    var pH = Math.min(sh - 20, 400);
     var pX = Math.floor(sw/2 - pW/2);
     var pY = Math.floor(sh/2 - pH/2);
     return { sw:sw, sh:sh, pX:pX, pY:pY, pW:pW, pH:pH,
@@ -291,23 +291,40 @@ function drawLorePanel(L, mx, my) {
     for (var li = start; li <= end; li++) {
         var isEditingLine = editingField === ("lore" + li);
         if (li < state.lore.length) {
-            // Existing line
+            // Existing line — leave room for move + delete buttons on right
             var lineY = y + (li - start) * 22;
-            Renderer.drawRect(isEditingLine ? Renderer.color(28,32,52,255) : Renderer.color(18,20,36,220), x, lineY, w-20, 18);
-            border1(x, lineY, w-20, 18, isEditingLine ? GOLD : BORDER);
+            var lineW = w - 56; // space for 3 buttons: ↑ ↓ ✖
+            Renderer.drawRect(isEditingLine ? Renderer.color(28,32,52,255) : Renderer.color(18,20,36,220), x, lineY, lineW, 18);
+            border1(x, lineY, lineW, 18, isEditingLine ? GOLD : BORDER);
             Renderer.drawString("&8"+(li+1)+".", x+2, lineY+3, true);
             var dispL = (""+state.lore[li]).replace(/&([0-9a-fk-or])/gi,"\u00a7$1");
             var lw2 = Renderer.getStringWidth(dispL);
-            var maxLW = w - 40;
+            var maxLW = lineW - 24;
             if (lw2 > maxLW) dispL = dispL.substring(0, Math.floor(dispL.length*(maxLW/lw2)));
             Renderer.drawString(dispL, x+16, lineY+3, true);
             if (isEditingLine && (Date.now()%900)<450)
                 Renderer.drawRect(GOLD, x+16+Renderer.getStringWidth((""+state.lore[li]).replace(/&[0-9a-fk-or]/gi,""))+1, lineY+3, 1, 11);
+
+            // Move Up button
+            var upX = x + lineW + 2;
+            var upHov = mx>=upX&&mx<=upX+16&&my>=lineY&&my<=lineY+8;
+            Renderer.drawRect(upHov?Renderer.color(60,80,140,230):Renderer.color(30,35,60,200), upX, lineY, 16, 8);
+            border1(upX, lineY, 16, 8, upHov?GOLD:BORDER);
+            Renderer.drawString("&7\u25b2", upX+4, lineY, true);
+
+            // Move Down button
+            var dnX = upX;
+            var dnHov = mx>=dnX&&mx<=dnX+16&&my>=lineY+9&&my<=lineY+17;
+            Renderer.drawRect(dnHov?Renderer.color(60,80,140,230):Renderer.color(30,35,60,200), dnX, lineY+9, 16, 9);
+            border1(dnX, lineY+9, 16, 9, dnHov?GOLD:BORDER);
+            Renderer.drawString("&7\u25bc", dnX+4, lineY+9, true);
+
             // Delete button
-            var dx = x + w - 18, dHov = mx>=dx&&mx<=dx+16&&my>=lineY&&my<=lineY+18;
+            var dx = x + lineW + 20;
+            var dHov = mx>=dx&&mx<=dx+16&&my>=lineY&&my<=lineY+18;
             Renderer.drawRect(dHov?Renderer.color(160,40,40,230):Renderer.color(80,25,25,200), dx, lineY, 16, 18);
             border1(dx, lineY, 16, 18, dHov?Renderer.color(220,60,60,255):BORDER);
-            Renderer.drawString("&c✖", dx+3, lineY+3, true);
+            Renderer.drawString("&c\u2716", dx+3, lineY+3, true);
         } else if (li === state.lore.length) {
             // Add new line button
             var addY = y + (li - start) * 22;
@@ -492,13 +509,25 @@ function handleLoreClick(L, mx, my, btn) {
     for (var li = start; li <= end; li++) {
         var lineY = y + (li - start) * 22;
         if (li < state.lore.length) {
+            var lineW = w - 56;
+            // Move Up
+            var upX = x + lineW + 2;
+            if (mx>=upX&&mx<=upX+16&&my>=lineY&&my<=lineY+8) {
+                if (li > 0) { var tmp=state.lore[li]; state.lore[li]=state.lore[li-1]; state.lore[li-1]=tmp; editingField=null; }
+                return;
+            }
+            // Move Down
+            if (mx>=upX&&mx<=upX+16&&my>=lineY+9&&my<=lineY+17) {
+                if (li < state.lore.length-1) { var tmp2=state.lore[li]; state.lore[li]=state.lore[li+1]; state.lore[li+1]=tmp2; editingField=null; }
+                return;
+            }
             // Delete button
-            var dx = x + w - 18;
+            var dx = x + lineW + 20;
             if (mx>=dx&&mx<=dx+16&&my>=lineY&&my<=lineY+18) {
                 state.lore.splice(li, 1); editingField = null; return;
             }
             // Edit line
-            if (mx>=x&&mx<=x+w-20&&my>=lineY&&my<=lineY+18) {
+            if (mx>=x&&mx<=x+lineW&&my>=lineY&&my<=lineY+18) {
                 editingField = "lore"+li; editBuffer = state.lore[li]; return;
             }
         } else if (li === state.lore.length) {
