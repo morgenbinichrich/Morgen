@@ -106,19 +106,26 @@ register("command", function() {
 
     // ── import (was /mg) ─────────────────────────────────────
     if (action === "import") {
-        if (!args[1]) { msg("&cUsage: &f/mm import &e[folder/]name"); return; }
-        args.shift();
-        ChatLib.command("mmimport " + args.join(" "), true);
+        if (!args[1]) { msg("&cUsage: &f/mm import &e[folder/]name (spaces allowed)"); return; }
+        var importPath = args.slice(1).join(" ");
+        ChatLib.command("mmimport " + importPath, true);
         return;
     }
 
+    // ── continue (resume after inventory full) ────────────────
+    if (action === "continue") {
+        var giveCmd = require("./giveCommand");
+        if (giveCmd && giveCmd.runContinue) giveCmd.runContinue();
+        else msg("&cNo pending import to continue.");
+        return;
+    }
 
     if (action === "chestexport") { handleChestExport(); return; } 
 
     // ── export ────────────────────────────────────────────────
     if (action === "export") {
-        if (!args[1]) { msg("&cUsage: &f/mm export &e[folder/]name"); return; }
-        exportItem(args[1]);
+        if (!args[1]) { msg("&cUsage: &f/mm export &e[folder/]name (spaces allowed)"); return; }
+        exportItem(args.slice(1).join(" "));
         return;
     }
 
@@ -257,7 +264,7 @@ register("command", function() {
     // Usage: /mm tojson <path>   (reads the .mig, spawns it, user must then /mm savejson <path>)
     // Simpler approach: convert file content directly without spawning
     if (action === "tojson") {
-        if (!args[1]) { msg("&cUsage: &f/mm tojson &e[folder/]name"); return; }
+        if (!args[1]) { msg("&cUsage: &f/mm tojson [folder/]name"); return; }
         args.shift();
         migToJson(args.join(" "));
         return;
@@ -266,7 +273,7 @@ register("command", function() {
     // ── tomig ─────────────────────────────────────────────────
     // Converts a .json file back to a .mig file
     if (action === "tomig") {
-        if (!args[1]) { msg("&cUsage: &f/mm tomig &e[folder/]name"); return; }
+        if (!args[1]) { msg("&cUsage: &f/mm tomig [folder/]name"); return; }
         args.shift();
         jsonToMig(args.join(" "));
         return;
@@ -583,8 +590,16 @@ function exportItem(pathArg) {
     try {
         ensureDir(dir);
         FileLib.write(dir, file, mig);
-        msg("&aExported &f" + item.getName() + " &ato &e" + display);
-        msg("  &7Import with: &f/mm import &e" + pathArg);
+        ChatLib.chat(ChatLib.addColor("&8\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"));
+        msg("&a&l\u2714 &aItem Exported");
+        msg("  &7Item    &f" + item.getName());
+        msg("  &7File    " + display);
+        var _importComp = new TextComponent(ChatLib.addColor("  &7Action  "));
+        var _btnComp = new TextComponent(ChatLib.addColor("&a&l[ \u25b6 Import Back ]"));
+        _btnComp.setClick("run_command", "/mm import " + pathArg);
+        _btnComp.setHover("show_text", ChatLib.addColor("&7Click to re-spawn this item\n&8/mm import " + pathArg));
+        ChatLib.chat(new Message(_importComp, _btnComp));
+        ChatLib.chat(ChatLib.addColor("&8\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"));
         if (Settings.autoOpenAfterExport) openImportsFolder();
     } catch (e) { msg("&cWrite failed: " + e); }
 }
@@ -636,7 +651,7 @@ function buildMigString(item) {
         const isUnbreak = tag.Unbreakable === 1;
         const hasGlow  = !!(tag.ench && tag.ench.some(e => e.id === 0 && e.lvl === 1));
         const hideFlags = tag.HideFlags !== undefined ? tag.HideFlags : Settings.defaultHideFlags;
-        const cc       = Settings.colorChar;
+        const cc       = "&";
 
         let loreLines = cleanLore(item.getLore());
         if (loreLines.length > 0 &&
@@ -792,8 +807,8 @@ function migToJson(pathArg) {
         FileLib.write(dir, file + ".json", jsonOut);
         ChatLib.chat(ChatLib.addColor("&8&m──────────────────────────────"));
         msg("&a.mig converted to .json");
-        msg("  &7Source: &e" + migPath + ".mig");
-        msg("  &7Output: &e" + migPath + ".json");
+        msg("  &7Source: " + migPath + ".mig");
+        msg("  &7Output: " + migPath + ".json");
         ChatLib.chat(ChatLib.addColor("&8&m──────────────────────────────"));
     } catch (e) { msg("&cWrite failed: " + e); }
 }
@@ -858,7 +873,7 @@ function jsonToMig(pathArg) {
 
     var isLeather = id.toLowerCase().includes("leather");
     var isSkull   = id.toLowerCase().includes("skull");
-    var cc = Settings.colorChar;
+    var cc = "&";
 
     var mig = 'ITEM "' + id + '" {\n\n';
     mig += '    Name: "' + name.replace(/\u00a7|§/g, cc) + '"\n';
@@ -882,9 +897,9 @@ function jsonToMig(pathArg) {
         FileLib.write(dir, file + ".mig", mig);
         ChatLib.chat(ChatLib.addColor("&8&m──────────────────────────────"));
         msg("&a.json converted to .mig");
-        msg("  &7Source: &e" + jsonPath + ".json");
-        msg("  &7Output: &e" + jsonPath + ".mig");
-        msg("  &7Import: &f/mm import &e" + jsonPath);
+        msg("  &7Source: " + jsonPath + ".json");
+        msg("  &7Output: " + jsonPath + ".mig");
+        msg("  &7Import: &f/mm import " + jsonPath);
         ChatLib.chat(ChatLib.addColor("&8&m──────────────────────────────"));
     } catch (e) { msg("&cWrite failed: " + e); }
 }
