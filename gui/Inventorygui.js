@@ -43,6 +43,16 @@ var symHoverIdx = -1;
 var copiedSym = null;
 var copiedFlash = 0;
 var symScrollY = 0;
+var customSymInput = "";
+var customSymActive = false;
+
+// Custom symbols: loaded from disk, shown in "Custom" category
+var customSymbols = [];
+function loadCustomSyms(){try{var r=FileLib.read("Morgen/config","customSyms.json");if(r)customSymbols=JSON.parse(r);}catch(_){}}
+function saveCustomSyms(){try{var b=new java.io.File(".").getCanonicalPath();new java.io.File(b+"/config/ChatTriggers/modules/Morgen/config").mkdirs();FileLib.write("Morgen/config","customSyms.json",JSON.stringify(customSymbols));}catch(_){}}
+loadCustomSyms();
+function rebuildCustomCat(){SYMBOL_CATS["Custom"]=customSymbols.length>0?customSymbols.slice():["(empty)"];symCatKeys=Object.keys(SYMBOL_CATS);}
+rebuildCustomCat();
 
 // ─── Snapshot ─────────────────────────────────────────────────
 
@@ -429,8 +439,62 @@ gui.registerDraw(function(mx, my) {
 
     } else {
         drawSymbolTab(L, mx, my);
-        // Symbol preview stays on right
-        drawItemPreview(null, L);
+        // Right panel for symbol tab
+        Renderer.drawRect(Renderer.color(13,14,21,242), L.pvX, L.pvY, L.pvW, L.pvH);
+        Renderer.drawRect(GOLD, L.pvX, L.pvY, 2, L.pvH);
+        border1(L.pvX, L.pvY, L.pvW, L.pvH, BORDER);
+        // Header
+        Renderer.drawRect(Renderer.color(18,20,34,255), L.pvX+2, L.pvY, L.pvW-2, 20);
+        Renderer.drawString("&6Custom Symbols", L.pvX+6, L.pvY+6, true);
+        var pvx = L.pvX+4;
+        var pvy = L.pvY + 26;
+        // Last copied box
+        Renderer.drawRect(Renderer.color(20,22,38,220), pvx, pvy, L.pvW-8, 28);
+        border1(pvx, pvy, L.pvW-8, 28, BORDER);
+        Renderer.drawString("&8Last copied", pvx+4, pvy+3, true);
+        if(copiedSym){
+            var bigSym = "&f"+copiedSym;
+            var bsw = Renderer.getStringWidth(copiedSym);
+            Renderer.drawString(bigSym, pvx + Math.floor((L.pvW-8-bsw)/2), pvy+14, true);
+        } else {
+            Renderer.drawString("&8\u2014", pvx+Math.floor((L.pvW-8)/2)-2, pvy+14, true);
+        }
+        pvy += 34;
+        // Input label
+        Renderer.drawString("&8Add custom symbol:", pvx, pvy, true); pvy+=12;
+        // Text input
+        Renderer.drawRect(Renderer.color(20, 22, 38, 220), pvx, pvy, L.pvW-8, 16);
+        border1(pvx, pvy, L.pvW-8, 16, customSymActive ? GOLD : BORDER);
+        var cusLabel = customSymInput === "" ? "&8type here..." : "&f" + customSymInput;
+        Renderer.drawString(cusLabel, pvx+4, pvy+4, true);
+        if(customSymActive&&(Date.now()%900)<450)
+            Renderer.drawRect(GOLD, pvx+4+Renderer.getStringWidth(customSymInput), pvy+3, 1, 10);
+        pvy += 18;
+        // "Add to Custom" button
+        var addHov=mx>=pvx&&mx<=pvx+L.pvW-8&&my>=pvy&&my<=pvy+16;
+        Renderer.drawRect(addHov?Renderer.color(30,80,30,230):Renderer.color(18,40,18,210),pvx,pvy,L.pvW-8,16);
+        border1(pvx,pvy,L.pvW-8,16,addHov?Renderer.color(80,200,80,255):BORDER);
+        var addLbl="&a+ Add to Custom";
+        var alw=Renderer.getStringWidth("+ Add to Custom");
+        Renderer.drawString(addLbl, pvx+Math.floor((L.pvW-8-alw)/2), pvy+4, true);
+        pvy += 18;
+        // "Copy" button
+        var cpHov=mx>=pvx&&mx<=pvx+L.pvW-8&&my>=pvy&&my<=pvy+16;
+        Renderer.drawRect(cpHov?Renderer.color(30,50,80,230):Renderer.color(18,28,45,210),pvx,pvy,L.pvW-8,16);
+        border1(pvx,pvy,L.pvW-8,16,cpHov?Renderer.color(80,140,220,255):BORDER);
+        var cpLbl="&9\u25b6 Copy"; var clw=Renderer.getStringWidth("\u25b6 Copy");
+        Renderer.drawString(cpLbl,pvx+Math.floor((L.pvW-8-clw)/2),pvy+4,true);
+        // Custom symbols list preview
+        pvy += 22;
+        Renderer.drawString("&8Custom list:", pvx, pvy, true); pvy+=11;
+        for(var _ci=0;_ci<Math.min(customSymbols.length,5);_ci++){
+            var _clHov=mx>=pvx&&mx<=pvx+L.pvW-8&&my>=pvy&&my<=pvy+11;
+            if(_clHov)Renderer.drawRect(Renderer.color(40,40,60,180),pvx,pvy,L.pvW-8,11);
+            Renderer.drawString("&f"+customSymbols[_ci]+" &8[click=copy, del]",pvx+3,pvy+1,true);
+            pvy+=11;
+        }
+        if(customSymbols.length===0)Renderer.drawString("&8(none added)",pvx+3,pvy,true);
+        if(customSymbols.length>5)Renderer.drawString("&8+"+(customSymbols.length-5)+" more in Custom tab",pvx+3,pvy,true);
 
         Renderer.drawRect(Renderer.color(16, 18, 30, 255), L.pX + 2, L.fY, L.pW - 2, FBAR);
         Renderer.drawRect(Renderer.color(198, 148, 32, 55), L.pX + 2, L.fY, L.pW - 2, 1);
@@ -481,6 +545,48 @@ gui.registerClicked(function(mx, my, btn) {
         }
 
     } else {
+        // Right panel clicks
+        var _pvx=L.pvX+4;
+        var _inputY=L.pvY+26+34+12;
+        var _addBY=_inputY+18;
+        var _cpBY=_addBY+18;
+        var _listY=_cpBY+22;
+        if(mx>=_pvx&&mx<=_pvx+L.pvW-8&&my>=_inputY&&my<=_inputY+16){
+            customSymActive=true; return;
+        }
+        if(mx>=_pvx&&mx<=_pvx+L.pvW-8&&my>=_addBY&&my<=_addBY+16){
+            if(customSymInput.length>0&&customSymbols.indexOf(customSymInput)===-1){
+                customSymbols.push(customSymInput);
+                rebuildCustomCat(); saveCustomSyms();
+                msg("&aAdded &f"+customSymInput+" &ato Custom");
+            }
+            customSymActive=false; return;
+        }
+        if(mx>=_pvx&&mx<=_pvx+L.pvW-8&&my>=_cpBY&&my<=_cpBY+16){
+            if(customSymInput.length>0){
+                try{
+                    var _sel3=Java.type("java.awt.datatransfer.StringSelection");
+                    Java.type("java.awt.Toolkit").getDefaultToolkit().getSystemClipboard().setContents(new _sel3(customSymInput),null);
+                    copiedSym=customSymInput; copiedFlash=Date.now()+1800;
+                    msg("&aCopied &f"+customSymInput+" &ato clipboard!");
+                }catch(e){msg("&cClipboard error: "+e);}
+            }
+            customSymActive=false; return;
+        }
+        // Custom list item click → copy
+        for(var _cli=0;_cli<Math.min(customSymbols.length,5);_cli++){
+            var _cly=_listY+11+_cli*11;
+            if(mx>=_pvx&&mx<=_pvx+L.pvW-8&&my>=_cly&&my<=_cly+11){
+                try{
+                    var _selC=Java.type("java.awt.datatransfer.StringSelection");
+                    Java.type("java.awt.Toolkit").getDefaultToolkit().getSystemClipboard().setContents(new _selC(customSymbols[_cli]),null);
+                    copiedSym=customSymbols[_cli]; copiedFlash=Date.now()+1800;
+                }catch(e){}
+                return;
+            }
+        }
+        customSymActive=false;
+
         // Category button click
         var catX     = L.pX + PAD;
         var catY     = L.aY;
@@ -525,6 +631,25 @@ gui.registerKeyTyped(function(ch, code) {
         if (code === 19) { doSnapshot(); return; }
         if (code === 14) { if (searchText.length > 0) searchText = searchText.slice(0, -1); return; }
         if (ch && ch !== "\u0000") { searchText += ch; searchActive = true; }
+    } else {
+        // Symbol tab
+        if (customSymActive) {
+            if (code === 14) { customSymInput = customSymInput.slice(0, -1); return; }
+            if (code === 28) { // Enter — copy custom symbol
+                if (customSymInput.length > 0) {
+                    try {
+                        var sel4 = Java.type("java.awt.datatransfer.StringSelection");
+                        Java.type("java.awt.Toolkit").getDefaultToolkit()
+                            .getSystemClipboard().setContents(new sel4(customSymInput), null);
+                        copiedSym = customSymInput; copiedFlash = Date.now() + 1800;
+                        msg("&aCopied &f" + customSymInput + " &ato clipboard!");
+                    } catch(e) {}
+                    customSymActive = false;
+                }
+                return;
+            }
+            if (ch && ch !== "\u0000") { customSymInput += ch; return; }
+        }
     }
 });
 
