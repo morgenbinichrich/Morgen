@@ -4,7 +4,7 @@
 // ============================================================
 
 import { createItem, colorize, formatStat, msg } from "../../utils/utils";
-import { trackRecent } from "../commands/exportCommand";
+import { trackRecent } from "../storage/recentStorage";
 import { validateMig } from "../migValidator";
 import Settings from "../../utils/config";
 
@@ -358,7 +358,9 @@ function readFileSafe(dir, file) {
         var base = new java.io.File(".").getCanonicalPath();
         var abs  = base + "/config/ChatTriggers/modules/" + dir + "/" + file;
         var f    = new java.io.File(abs);
-        var br   = new java.io.BufferedReader(new java.io.FileReader(f));
+        var fis  = new java.io.FileInputStream(f);
+        var isr  = new java.io.InputStreamReader(fis, "UTF-8");
+        var br   = new java.io.BufferedReader(isr);
         var sb   = new java.lang.StringBuilder();
         var line;
         while ((line = br.readLine()) !== null) { sb.append(line); sb.append("\n"); }
@@ -373,9 +375,10 @@ function readFileSafe(dir, file) {
 
 register("command", function() {
     var args    = Array.prototype.slice.call(arguments);
-    var pathArg = args[0] || Settings.defaultConfigFile;
+    // Join all args to support spaces in folder/file names (e.g. "Test/Test Item")
+    var pathArg = (args.length > 0 ? args.join(" ") : null) || Settings.defaultConfigFile;
 
-    if (!pathArg) { msg("&cUsage: &f/mmimport &e<filename>"); return; }
+    if (!pathArg) { msg("&cUsage: &f/mmimport &e<filename> (spaces allowed)"); return; }
 
     try {
         var resolved = resolvePath(pathArg);
@@ -385,7 +388,7 @@ register("command", function() {
         // Validation
         var validation = validateMig(content);
         if (!validation.valid) {
-            msg("&c\u2716 Cannot import — &e" + resolved.display + " &chas errors:");
+            msg("&c\u2716 Cannot import — " + resolved.display + " &chas errors:");
             validation.errors.forEach(function(e) { msg("  &c\u2022 " + e); });
             return;
         }
@@ -457,8 +460,14 @@ register("command", function() {
         }
 
         // Spawn all with delay
+        _pendingPath    = resolved.display;
+        _pendingMigName = migsArr[0] && migsArr[0].names[0] ? ("" + migsArr[0].names[0]) : pathArg;
         spawnQueue(tasks, 0, function(placed) {
-            msg("&aImported &e" + placed + "&a item(s) from &e" + resolved.display);
+            ChatLib.chat(ChatLib.addColor("&8\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"));
+            msg("&a&l\u2714 &aImport Complete");
+            msg("  &7Items   &f" + placed + " &8item" + (placed !== 1 ? "s" : "") + " spawned");
+            msg("  &7Source  " + resolved.display);
+            ChatLib.chat(ChatLib.addColor("&8\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500"));
             if (placed > 0) {
                 var firstName = migsArr[0].names[0] || pathArg;
                 trackRecent(firstName, pathArg);
