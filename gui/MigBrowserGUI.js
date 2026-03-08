@@ -4,7 +4,6 @@
 // ============================================================
 
 import { msg } from "../utils/utils";
-import Settings from "../utils/config";
 
 // ─── Icons ────────────────────────────────────────────────────
 
@@ -13,8 +12,13 @@ function loadImg(n){try{return new Image(A+n);}catch(_){return null;}}
 var I_FOLDER=loadImg("folder.png"), I_MIG=loadImg("paper.png");
 var I_JSON=loadImg("item.png"), I_TRASH=loadImg("bin_closed.png"), I_TRASH2=loadImg("bin.png");
 
-function drawFallback(x,y,isDir,isJson){
-    if(isDir){
+function drawFallback(x,y,isDir,isJson,isTrash){
+    if(isTrash){
+        // Draw simple trash icon fallback
+        Renderer.drawRect(Renderer.color(200,50,50,220),x+3,y+3,10,11);
+        Renderer.drawRect(Renderer.color(255,80,80,200),x+2,y+2,12,2);
+        Renderer.drawRect(Renderer.color(200,50,50,200),x+5,y+1,6,2);
+    } else if(isDir){
         Renderer.drawRect(Renderer.color(230,180,40,220),x+1,y+5,14,9);
         Renderer.drawRect(Renderer.color(230,180,40,220),x+1,y+3,7,4);
     }else if(isJson){
@@ -29,9 +33,9 @@ function drawFallback(x,y,isDir,isJson){
         Renderer.drawRect(Renderer.color(140,180,255,180),x+3,y+10,5,2);
     }
 }
-function drawImg(img,x,y,w,h,isDir,isJson){
+function drawImg(img,x,y,w,h,isDir,isJson,isTrash){
     if(img){try{Renderer.drawImage(img,x,y,w,h);return;}catch(_){}}
-    drawFallback(x,y,isDir,isJson);
+    drawFallback(x,y,isDir,isJson,isTrash);
 }
 
 // ─── Sounds ───────────────────────────────────────────────────
@@ -60,10 +64,11 @@ register("tick",function(){
 
 var gui=new Gui(),open2=false;
 var allFiles=[],files=[],filtered=[];
-var subDir="",page=0,hoverIdx=-1;
+var subDir="",scrollTop=0,hoverIdx=-1;
 var searchText="",searchActive=false,searchMode=false;
 var perPage=10;
 var dragging=false,dOX=0,dOY=0,pOX=0,pOY=0;
+var guiScale=1.0; // user-adjustable scale (scroll wheel)
 var L={};
 
 // Hover preview state
@@ -110,14 +115,14 @@ function readRecursive(path,base){
 }
 
 function refresh(){
-    page=0;hoverIdx=-1;previewEntry=null;
+    scrollTop=0;hoverIdx=-1;previewEntry=null;
     files=readShallow(BASE+subDir);
     allFiles=readRecursive(BASE,"");
     filter();
 }
 
 function filter(){
-    page=0;
+    scrollTop=0;
     if(!searchText){searchMode=false;filtered=files.slice();return;}
     searchMode=true;
     var q=searchText.toLowerCase();
@@ -216,13 +221,15 @@ function getPreview(entry) {
 
 function layout(){
     var sw=Renderer.screen.getWidth(),sh=Renderer.screen.getHeight();
-    var pW=Math.min(260,Math.max(200,Math.floor(sw*0.28)));
-    var pH=Math.floor(sh*0.8);
+    var baseW=Math.min(260,Math.max(200,Math.floor(sw*0.28)));
+    var baseH=Math.floor(sh*0.8);
+    var pW=Math.floor(baseW*guiScale);
+    var pH=Math.floor(baseH*guiScale);
     var pX=Math.max(0,Math.min(Math.floor(sw/2-pW/2)+pOX,sw-pW));
     var pY=Math.max(0,Math.min(Math.floor(sh/2-pH/2)+pOY,sh-pH));
     var hH=28,sH=20,fH=26;
     var lY=pY+hH+sH+10,lH=pH-hH-sH-fH-14;
-    perPage=Math.max(1,Math.floor(lH/21));
+    perPage=Math.max(1,Math.floor(lH/27));
     // Preview panel: to the right of main panel
     var pvW=140,pvX=pX+pW+6;
     // Clamp preview to screen
@@ -332,6 +339,18 @@ function drawPreviewPanel(mx,my) {
 
 // ─── Main draw ────────────────────────────────────────────────
 
+var resizeMode=false; // true = scroll resizes GUI
+
+gui.registerScrolled(function(mx,my,dir){
+    if(resizeMode){
+        guiScale=Math.max(0.5,Math.min(2.0,guiScale+dir*0.05));
+        guiScale=Math.round(guiScale*20)/20;
+    } else {
+        // Scroll through file list
+        scrollTop=Math.max(0,Math.min(Math.max(0,filtered.length-perPage),scrollTop-dir));
+    }
+});
+
 gui.registerDraw(function(mx,my){
     layout();
     if(dragging){pOX=mx-dOX-Math.floor(L.sw/2-L.pW/2);pOY=my-dOY-Math.floor(L.sh/2-L.pH/2);layout();}
@@ -375,44 +394,64 @@ gui.registerDraw(function(mx,my){
 
     // File list
     hoverIdx=-1;
-    var start=page*perPage,end=Math.min(start+perPage,filtered.length);
+    var start=scrollTop,end=Math.min(start+perPage,filtered.length);
     if(filtered.length===0)
         Renderer.drawString(searchMode?"&8No results for \"&7"+searchText+"&8\"":"&8No files here.",L.lX+4,L.lY+7,true);
 
+    var _rowY=L.lY;
     for(var i=start;i<end;i++){
         var e=filtered[i];
-        var rY=L.lY+(i-start)*21;
-        var hov=mx>=L.lX&&mx<=L.lX+L.lW&&my>=rY&&my<=rY+19;
+        var rY=_rowY;
+        var rowH=searchMode&&e.rel?26:21;
+        var hov=mx>=L.lX&&mx<=L.lX+L.lW&&my>=rY&&my<=rY+rowH-2;
         if(hov)hoverIdx=i;
         if(hov){
-            Renderer.drawRect(Renderer.color(26,30,50,200),L.lX,rY,L.lW,20);
-            Renderer.drawRect(GOLD,L.lX,rY,2,20);
+            Renderer.drawRect(Renderer.color(26,30,50,200),L.lX,rY,L.lW,rowH);
+            Renderer.drawRect(GOLD,L.lX,rY,2,rowH);
         }
         var ic=e.isDir?I_FOLDER:(e.isJson?I_JSON:I_MIG);
-        drawImg(ic,L.lX+4,rY+2,15,15,e.isDir,e.isJson);
-        Renderer.drawString(buildLabel(e),L.lX+23,rY+5,true);
-        if(searchMode&&e.rel)
-            Renderer.drawString("&8"+e.rel.replace(/\/$/,""),L.lX+L.lW-Renderer.getStringWidth(e.rel)-22,rY+5,true);
-        if(hov&&!e.isDir){
-            var tx=L.lX+L.lW-18,onT=mx>=tx&&mx<=tx+16;
-            drawImg(onT?I_TRASH2:I_TRASH,tx,rY+2,15,15,false,false);
+        var rowH=searchMode&&e.rel?26:21;
+        drawImg(ic,L.lX+4,rY+(searchMode&&e.rel?5:2),15,15,e.isDir,e.isJson);
+        Renderer.drawString(buildLabel(e),L.lX+23,rY+(searchMode&&e.rel?3:5),true);
+        if(searchMode&&e.rel){
+            var folderStr="&8\u25ba &7"+e.rel.replace(/\/$/,"");
+            Renderer.drawString(folderStr,L.lX+23,rY+13,true);
         }
+        if(hov&&!e.isDir){
+            var tx=L.lX+L.lW-18,onT=mx>=tx&&mx<=tx+16&&my>=rY&&my<=rY+rowH-2;
+            drawImg(onT?I_TRASH2:I_TRASH,tx,rY+Math.floor((rowH-15)/2),15,15,false,false,true);
+        }
+        _rowY+=rowH+1;
     }
 
     // Footer
     Renderer.drawRect(Renderer.color(16,18,30,255),L.pX+2,L.fY,L.pW-2,L.fH);
     Renderer.drawRect(Renderer.color(198,148,32,55),L.pX+2,L.fY,L.pW-2,1);
-    if(!searchMode&&subDir!=="")drawBtn("\u2190",L.pX+8,L.fY+4,38,18,mx,my,Renderer.color(198,148,32,180));
-    if(searchMode)drawBtn("\u00d7",L.pX+8,L.fY+4,38,18,mx,my,Renderer.color(160,55,55,200));
-    drawBtn("\u27F3",L.pX+L.pW-24,L.fY+4,17,18,mx,my,Renderer.color(198,148,32,180));
-    var total=Math.max(1,Math.ceil(filtered.length/perPage));
-    var pcx=Math.floor(L.pX+L.pW/2);
-    var pStr=(page+1)+"/"+total;
-    if(page>0)drawBtn("<",pcx-22,L.fY+4,18,18,mx,my,Renderer.color(198,148,32,180));
-    if(page+1<total)drawBtn(">",pcx+4,L.fY+4,18,18,mx,my,Renderer.color(198,148,32,180));
-    Renderer.drawString("&7"+pStr,pcx-Math.floor(Renderer.getStringWidth(pStr)/2),L.fY+8,true);
-    Renderer.drawString("&8"+filtered.length+(searchMode?" results":" files"),
-        L.pX+L.pW-Renderer.getStringWidth(filtered.length+" results")-10,L.fY+8,true);
+    // Left buttons: back / clear-search
+    if(!searchMode&&subDir!=="")drawBtn("\u2190",L.pX+8,L.fY+4,28,18,mx,my,Renderer.color(198,148,32,180));
+    if(searchMode)drawBtn("\u00d7",L.pX+8,L.fY+4,28,18,mx,my,Renderer.color(160,55,55,200));
+    // Resize toggle button
+    var rsBtnX=L.pX+40,rsBtnW=Math.floor(Renderer.getStringWidth(Math.round(guiScale*100)+"%")+14);
+    var rsHov=mx>=rsBtnX&&mx<=rsBtnX+rsBtnW&&my>=L.fY+4&&my<=L.fY+22;
+    Renderer.drawRect(resizeMode?Renderer.color(198,148,32,200):(rsHov?Renderer.color(50,53,80,230):Renderer.color(28,30,50,200)),rsBtnX,L.fY+4,rsBtnW,18);
+    border1(rsBtnX,L.fY+4,rsBtnW,18,resizeMode?GOLD:BORDER);
+    Renderer.drawString("&f"+Math.round(guiScale*100)+"%",rsBtnX+7,L.fY+8,true);
+    // Refresh button (right)
+    drawBtn("\u27F3",L.pX+L.pW-26,L.fY+4,20,18,mx,my,Renderer.color(198,148,32,180));
+    // Scroll position indicator — centered
+    var _visEnd=Math.min(scrollTop+perPage,filtered.length);
+    var pStr=filtered.length===0?"&80":"&7"+(scrollTop+1)+"&8\u2013&7"+_visEnd+"&8/&7"+filtered.length;
+    var pStrRaw=filtered.length===0?"0":(scrollTop+1)+"-"+_visEnd+"/"+filtered.length;
+    var pStrW=Renderer.getStringWidth(pStrRaw);
+    var pStrX=Math.floor(L.pX+L.pW/2)-Math.floor(pStrW/2);
+    Renderer.drawString(pStr,pStrX,L.fY+8,true);
+    // Count text — safely to the left of refresh button
+    var countStr="&8"+(searchMode?filtered.length+" results":filtered.length+" files");
+    var countRaw=(searchMode?filtered.length+" results":filtered.length+" files");
+    var countW=Renderer.getStringWidth(countRaw);
+    Renderer.drawString(countStr,L.pX+L.pW-countW-32,L.fY+8,true);
+    // Hint: resize active
+    if(resizeMode)Renderer.drawString("&6\u25b2\u25bc &8scroll to resize",rsBtnX+rsBtnW+4,L.fY+8,true);
 
     // ── Hover preview panel ───────────────────────────────────
     drawPreviewPanel(mx,my);
@@ -442,13 +481,11 @@ gui.registerClicked(function(mx,my,btn){
         dragging=true;dOX=mx-(Math.floor(L.sw/2-L.pW/2)+pOX);dOY=my-(Math.floor(L.sh/2-L.pH/2)+pOY);return;}
     if(mx>=L.sX&&mx<=L.sX+L.sW&&my>=L.sY&&my<=L.sY+L.sH){searchActive=true;return;}
     searchActive=false;
-    var total=Math.max(1,Math.ceil(filtered.length/perPage));
-    var pcx=Math.floor(L.pX+L.pW/2);
-    if(mx>=L.pX+L.pW-24&&mx<=L.pX+L.pW-7&&my>=L.fY+4&&my<=L.fY+22){refresh();playClick();return;}
-    if(mx>=L.pX+8&&mx<=L.pX+46&&my>=L.fY+4&&my<=L.fY+22){
-        if(searchMode){searchText="";searchActive=false;filter();}else goUp();playClick();return;}
-    if(page>0&&mx>=pcx-22&&mx<=pcx-4&&my>=L.fY+4&&my<=L.fY+22){page--;playClick();return;}
-    if(page+1<total&&mx>=pcx+4&&mx<=pcx+22&&my>=L.fY+4&&my<=L.fY+22){page++;playClick();return;}
+    if(mx>=L.pX+L.pW-26&&mx<=L.pX+L.pW-6&&my>=L.fY+4&&my<=L.fY+22){refresh();playClick();return;}
+    if(mx>=L.pX+8&&mx<=L.pX+36&&my>=L.fY+4&&my<=L.fY+22){
+        if(searchMode){searchText="";searchActive=false;scrollTop=0;filter();}else goUp();playClick();return;}
+    var _rsBtnX=L.pX+40,_rsBtnW=Math.floor(Renderer.getStringWidth(Math.round(guiScale*100)+"%")+14);
+    if(mx>=_rsBtnX&&mx<=_rsBtnX+_rsBtnW&&my>=L.fY+4&&my<=L.fY+22){resizeMode=!resizeMode;playClick();return;}
     if(hoverIdx>=0&&hoverIdx<filtered.length){
         var e=filtered[hoverIdx];
         if(!e.isDir){
@@ -518,7 +555,7 @@ function delFile(e){
 
 function goUp(){
     var s=subDir.replace(/\/$/,""),l=s.lastIndexOf("/");
-    subDir=l===-1?"":s.substring(0,l+1);previewCache={};refresh();
+    subDir=l===-1?"":s.substring(0,l+1);scrollTop=0;previewCache={};refresh();
 }
 
 function openFolder(){
@@ -529,11 +566,11 @@ function openFolder(){
     }catch(e){msg("&cFailed: "+e);}
 }
 
-function loadPos(){try{var r=FileLib.read("Morgen/config","guiPos.json");if(!r)return;var p=JSON.parse(r);pOX=p.x||0;pOY=p.y||0;}catch(_){}}
-function savePos(){try{var b=new java.io.File(".").getCanonicalPath();new java.io.File(b+"/config/ChatTriggers/modules/Morgen/config").mkdirs();FileLib.write("Morgen/config","guiPos.json",JSON.stringify({x:pOX,y:pOY}));}catch(_){}}
+function loadPos(){try{var r=FileLib.read("Morgen/config","guiPos.json");if(!r)return;var p=JSON.parse(r);pOX=p.x||0;pOY=p.y||0;guiScale=p.scale||1.0;}catch(_){}}
+function savePos(){try{var b=new java.io.File(".").getCanonicalPath();new java.io.File(b+"/config/ChatTriggers/modules/Morgen/config").mkdirs();FileLib.write("Morgen/config","guiPos.json",JSON.stringify({x:pOX,y:pOY,scale:guiScale}));}catch(_){}}
 register("guiClosed",function(){if(open2)savePos();open2=false;dragging=false;previewEntry=null;});
 
 export function openMigBrowser(){
     subDir="";searchText="";searchActive=false;searchMode=false;
-    page=0;dragging=false;previewCache={};loadPos();refresh();open2=true;gui.open();
+    scrollTop=0;dragging=false;previewCache={};loadPos();refresh();open2=true;gui.open();
 }
