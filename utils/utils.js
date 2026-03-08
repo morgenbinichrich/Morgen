@@ -245,13 +245,56 @@ export function colorize(str) {
     return result;
 }
 
+// Lines that Hypixel Housing injects automatically — never part of the real item lore.
+// Matched against the stripped (color-code-free) version of each line.
+// IMPORTANT: keep these very specific — real lore lines must never be caught.
+var _HOUSING_INJECTED = [
+    // Bottom hint  "LSHIFT for more options"
+    /^lshift\s+for\s+more\s+options$/i,
+    /^for\s+more\s+options$/i,
+    // NBT summary  "NBT: 3 tag(s)"
+    /^nbt:\s*\d+\s*tag\(s\)$/i,
+    // Raw item id line  "minecraft:wooden_pickaxe"  (exactly this format, no spaces)
+    /^minecraft:[a-z0-9_]+$/,
+    // Italic item name line  "Rusty Pickaxe (#0270)"  — (#NNNN) suffix is unique to Housing
+    /^.+\s*\(#\d{3,}\)\s*$/,
+];
+
 export function cleanLore(loreArray) {
     if (!loreArray) return [];
     let lines = loreArray.map(l => String(l));
-    if (lines.length > 0) {
-        const last = stripColor(lines[lines.length - 1]).trim();
-        if (last.includes("LSHIFT") || last.includes("for more options")) lines.pop();
+
+    // Strip injected lines from the bottom
+    var keepTrimming = true;
+    while (keepTrimming && lines.length > 0) {
+        keepTrimming = false;
+        var last = stripColor(lines[lines.length - 1]).trim();
+        for (var i = 0; i < _HOUSING_INJECTED.length; i++) {
+            if (_HOUSING_INJECTED[i].test(last)) {
+                lines.pop();
+                keepTrimming = true;
+                break;
+            }
+        }
     }
+
+    // Filter any remaining injected lines from anywhere in the array
+    lines = lines.filter(function(l) {
+        var stripped = stripColor(l).trim();
+        if (stripped.length === 0) return true;
+        for (var i = 0; i < _HOUSING_INJECTED.length; i++) {
+            if (_HOUSING_INJECTED[i].test(stripped)) return false;
+        }
+        return true;
+    });
+
+    // Strip the italic item-name line at the top ONLY if the raw line literally
+    // starts with §o (the italic code Housing wraps around the display name).
+    if (lines.length > 0 && lines[0].replace(/^\s*/, "").indexOf("\u00a7o") === 0) {
+        lines.shift();
+    }
+
+    // Collapse consecutive blank lines
     const result = [];
     let prevBlank = false;
     for (const l of lines) {
@@ -260,7 +303,7 @@ export function cleanLore(loreArray) {
         result.push(l);
         prevBlank = blank;
     }
-    while (result.length && stripColor(result[0]).trim() === "")                result.shift();
-    while (result.length && stripColor(result[result.length-1]).trim() === "")  result.pop();
+    while (result.length && stripColor(result[0]).trim() === "")               result.shift();
+    while (result.length && stripColor(result[result.length-1]).trim() === "") result.pop();
     return result;
 }
