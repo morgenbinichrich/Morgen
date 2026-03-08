@@ -69,6 +69,7 @@ export function buildNBTString(obj) {
     // Coerce to primitive string always — handles Java String objects too
     if (typeof obj === "string" || (obj && obj.getClass)) {
         var s = "" + obj; // force JS primitive string via concatenation
+        // Keep all characters including emojis and unicode symbols
         return '"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
     }
     if (Array.isArray(obj))        return "[" + obj.map(buildNBTString).join(",") + "]";
@@ -239,8 +240,9 @@ export function stripColor(str) {
 }
 export function colorize(str) {
     var result = "" + ChatLib.addColor(String(str));
-    // ChatLib.addColor prepends §r to every string — strip ALL occurrences
-    return result.replace(/§r/g, "");
+    // ChatLib.addColor may prepend a lone §r — only strip a leading §r, not all
+    if (result.startsWith("\u00a7r")) result = result.slice(2);
+    return result;
 }
 
 export function cleanLore(loreArray) {
