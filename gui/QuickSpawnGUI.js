@@ -146,7 +146,8 @@ register("guiClosed",function(){guiOpen=false;});
 
 export function handleQsCommand(args){
     var sub=("" + (args[0]||"")).toLowerCase();
-    if(!sub || sub==="help"){
+    if(!sub){openQuickSpawn();return;}
+    if(sub==="help"){
         msg("&6/mm qs &8\u00bb &fQuick Spawn help:");
         msg("  &f/mm qs            &8\u2014 &7open GUI");
         msg("  &f/mm qs <1-9>      &8\u2014 &7spawn slot directly from chat");
