@@ -140,15 +140,6 @@ class Settings {
     decimalPlaces = 1;
 
     @SwitchProperty({
-        name: "Use & Colour Codes",
-        description: "ON = use & codes in exported files. OFF = use section sign codes.",
-        category: "Formatting"
-    })
-    useAmpersandCodes = true;
-
-    get colorChar() { return this.useAmpersandCodes ? "&" : "\u00a7"; }
-
-    @SwitchProperty({
         name: "Strip Colour on Export",
         description: "Remove colour codes from lore lines when exporting.",
         category: "Formatting"
@@ -158,6 +149,13 @@ class Settings {
     // ═══════════════════════════
     //  EXPORT
     // ═══════════════════════════
+
+    @SwitchProperty({
+        name: "Export All Button",
+        description: "Show the 'Export All → .mig' overlay button when a chest GUI is open.",
+        category: "Export"
+    })
+    chestExportOverlay = true;
 
     @SwitchProperty({
         name: "Lore as list()",
@@ -227,8 +225,8 @@ class Settings {
     geminiModel = "gemini-2.5-flash-lite";
 
     @SliderProperty({
-        name: "Name Count",
-        description: "How many item names to generate with /mm ai names.",
+        name: "Default Name Count",
+        description: "How many names /mm ai names generates when no amount is specified.",
         category: "AI",
         min: 1,
         max: 20
@@ -236,8 +234,8 @@ class Settings {
     aiNameCount = 8;
 
     @SliderProperty({
-        name: "Item Count",
-        description: "Default number of item tiers to generate with /mm ai set.",
+        name: "Default Item Count",
+        description: "How many items /mm ai mig generates when no amount is specified.",
         category: "AI",
         min: 1,
         max: 20
