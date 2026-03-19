@@ -26,7 +26,8 @@ var state = {
     itemModel:       "",
     enchants:        [],
     stats:           {},
-    extraAttributes: null
+    extraAttributes: null,   // ← preserved verbatim, never edited
+    skullOwner:      null    // ← full SkullOwner compound, preserved verbatim
 };
 
 var activeSection   = "name";
@@ -122,7 +123,6 @@ function drawField(label, val, x, y, w, active, hint) {
     Renderer.drawString("\u00a78" + labelStr, x+4, y+4, true);
     var maxW  = w - labelW - 14;
     var valX  = x + 4 + labelW;
-
     if (active) {
         var raw = "" + val;
         while (raw.length > 0 && Renderer.getStringWidth(raw) > maxW) raw = raw.slice(0, -1);
@@ -169,13 +169,10 @@ function getFilteredModels() {
 
 function drawPreviewPanel(L, mx, my) {
     var x = L.prvX, y = L.prvY, w = L.prvW, h = L.prvH;
-
     Renderer.drawRect(Renderer.color(10,11,20,215), x, y, w, h);
     Renderer.drawRect(Renderer.color(198,148,32,255), x, y, 2, h);
     border1(x, y, w, h, Renderer.color(40,44,70,200));
-
     var iy = y + 14;
-
     try {
         var heldItem = Player.getHeldItem();
         if (heldItem && heldItem.getID() !== 0) {
@@ -187,7 +184,6 @@ function drawPreviewPanel(L, mx, my) {
             iy += 30;
         }
     } catch(_) { iy += 40; }
-
     var nameStr = (""+state.name).replace(/&([0-9a-fk-or])/gi, "\u00a7$1") || "\u00a78unnamed";
     var nRaw    = nameStr.replace(/\u00a7./g, "");
     if (Renderer.getStringWidth(nRaw) > w - 12) {
@@ -198,7 +194,6 @@ function drawPreviewPanel(L, mx, my) {
     var nameX = x + Math.floor((w - Renderer.getStringWidth(nameStr.replace(/\u00a7./g,"")))/2);
     Renderer.drawString(nameStr, nameX, iy, true);
     iy += 14;
-
     if (state.itemModel) {
         var ms = state.itemModel.replace("minecraft:","");
         var msW = Renderer.getStringWidth(ms) + 10;
@@ -208,10 +203,17 @@ function drawPreviewPanel(L, mx, my) {
         Renderer.drawString("\u00a7b" + ms, msX + 4, iy + 2, true);
         iy += 18;
     }
-
+    // Show ExtraAttributes indicator
+    if (state.extraAttributes) {
+        var eaStr = "\u00a78\u2605 ExtraAttr";
+        var eaW   = Renderer.getStringWidth(eaStr.replace(/\u00a7./g,"")) + 10;
+        var eaX   = x + Math.floor((w - eaW) / 2);
+        Renderer.drawRect(Renderer.color(30,20,50,180), eaX, iy, eaW, 11);
+        Renderer.drawString(eaStr, eaX + 4, iy + 1, true);
+        iy += 14;
+    }
     Renderer.drawRect(Renderer.color(52,55,82,80), x+8, iy+2, w-16, 1);
     iy += 8;
-
     if (state.lore.length === 0) {
         Renderer.drawString("\u00a78\u2014  no lore  \u2014", x + Math.floor((w - Renderer.getStringWidth("\u2014  no lore  \u2014"))/2), iy, true);
     } else {
@@ -221,8 +223,7 @@ function drawPreviewPanel(L, mx, my) {
             if (lStr.charAt(0) !== "\u00a7") lStr = "\u00a79" + lStr;
             var lRaw = lStr.replace(/\u00a7./g,"");
             while (lRaw.length > 1 && Renderer.getStringWidth(lRaw) > w - 14) {
-                lStr = lStr.slice(0, -1);
-                lRaw = lStr.replace(/\u00a7./g,"");
+                lStr = lStr.slice(0, -1); lRaw = lStr.replace(/\u00a7./g,"");
             }
             Renderer.drawString(lStr, x+7, iy, true);
             iy += 11;
@@ -234,30 +235,24 @@ function drawPreviewPanel(L, mx, my) {
 
 function drawModelPicker(L, mx, my) {
     var x = L.cntX, y = L.cntY, w = L.cntW;
-
     Renderer.drawRect(Renderer.color(12,13,22,252), x-2, y-2, w+4, L.cntH+4);
     border1(x-2, y-2, w+4, L.cntH+4, GOLD);
-
     Renderer.drawString("&6ItemModel Picker", x, y, true);
     var closeHov = mx >= x+w-52 && mx <= x+w && my >= y-2 && my <= y+12;
     Renderer.drawRect(closeHov ? Renderer.color(140,35,35,230) : Renderer.color(60,20,20,200), x+w-52, y-1, 52, 13);
     border1(x+w-52, y-1, 52, 13, closeHov ? Renderer.color(220,60,60,255) : BORDER);
     Renderer.drawString("&c✖ Close", x+w-49, y+1, true);
     y += 16;
-
     var sActive = modelSearchActive;
     Renderer.drawRect(sActive ? Renderer.color(28,32,56,255) : Renderer.color(18,20,36,230), x, y, w, 18);
     border1(x, y, w, 18, sActive ? GOLD : BORDER);
     Renderer.drawString("&8» &f" + (modelSearch || "") + (sActive && (Date.now()%900)<450 ? "|" : ""), x+4, y+4, true);
     if (!modelSearch) Renderer.drawString("&8search...", x+12, y+4, true);
     y += 22;
-
     var models    = getFilteredModels();
     var maxScroll = Math.max(0, models.length - MODEL_PER_PAGE);
     if (modelPickerScroll > maxScroll) modelPickerScroll = maxScroll;
-
-    var rowH  = 22;
-    var iconW = 18;
+    var rowH  = 22, iconW = 18;
     for (var i = modelPickerScroll; i < Math.min(modelPickerScroll + MODEL_PER_PAGE, models.length); i++) {
         var m      = models[i];
         var short  = m.replace("minecraft:", "");
@@ -271,9 +266,7 @@ function drawModelPicker(L, mx, my) {
         );
         if (isSel) Renderer.drawRect(Renderer.color(80,200,80,210), x, y, 2, rowH-1);
         else if (rowHov) Renderer.drawRect(GOLD, x, y, 2, rowH-1);
-
         Renderer.drawString((isSel ? "&a" : (rowHov ? "&f" : "&7")) + short, x+6, y+6, true);
-
         try {
             var mcReg = Java.type("net.minecraft.item.Item").func_111206_d(m);
             if (mcReg) {
@@ -282,15 +275,10 @@ function drawModelPicker(L, mx, my) {
                 if (ctItem && ctItem.getID() !== 0) ctItem.draw(x + w - iconW - 2, y + 2, 1);
             }
         } catch(_) {}
-
         y += rowH;
     }
-
     var showing = Math.min(modelPickerScroll + MODEL_PER_PAGE, models.length);
-    Renderer.drawString(
-        "&8" + (modelPickerScroll+1) + "–" + showing + " / " + models.length,
-        x, y+4, true
-    );
+    Renderer.drawString("&8" + (modelPickerScroll+1) + "–" + showing + " / " + models.length, x, y+4, true);
 }
 
 function drawNamePanel(L, mx, my) {
@@ -298,7 +286,6 @@ function drawNamePanel(L, mx, my) {
     Renderer.drawString("&f&lItem Name", x, y, true); y += 16;
     drawField("Name", state.name, x, y, w, editingField === "name", "Enter display name");
     y += 26;
-
     Renderer.drawString("&8Colors:", x, y, true); y += 12;
     var colors  = ["&0","&1","&2","&3","&4","&5","&6","&7","&8","&9","&a","&b","&c","&d","&e","&f"];
     var formats = ["&l","&o","&n","&m","&k","&r"];
@@ -322,9 +309,7 @@ function drawNamePanel(L, mx, my) {
 
 function drawLorePanel(L, mx, my) {
     var x = L.cntX, y = L.cntY, w = L.cntW;
-
     Renderer.drawString("&f&lLore &8(" + state.lore.length + " lines)", x, y, true);
-
     var hasClip  = _externalLoreClipboard && _externalLoreClipboard.length > 0;
     var pasteW   = Renderer.getStringWidth("Paste " + (hasClip ? "("+_externalLoreClipboard.length+")" : "")) + 10;
     var pasteX   = x + w - pasteW;
@@ -338,12 +323,9 @@ function drawLorePanel(L, mx, my) {
         (!hasClip ? "&8" : (pasteHov ? "&f" : "&b")) + "Paste" + (hasClip ? " &8("+_externalLoreClipboard.length+")" : ""),
         pasteX+4, y+1, true
     );
-
     y += 16;
-
     var start = lorePage * LORE_PER_PAGE;
     var end   = Math.min(start + LORE_PER_PAGE, state.lore.length);
-
     for (var li = start; li <= end; li++) {
         var lineY = y + (li - start) * 22;
         if (li < state.lore.length) {
@@ -366,7 +348,6 @@ function drawLorePanel(L, mx, my) {
                 if (dispL.charAt(0) !== "\u00a7") dispL = "\u00a79" + dispL;
                 Renderer.drawString(dispL, x+16, lineY+3, true);
             }
-
             var upX  = x+lineW+2;
             var upH  = mx >= upX && mx <= upX+16 && my >= lineY && my <= lineY+8;
             var dnH  = mx >= upX && mx <= upX+16 && my >= lineY+9 && my <= lineY+18;
@@ -388,7 +369,6 @@ function drawLorePanel(L, mx, my) {
             Renderer.drawString("&8+ Add line", x+4, lineY+3, true);
         }
     }
-
     if (state.lore.length > LORE_PER_PAGE) {
         var pY2 = y + (end - start + 1) * 22 + 4;
         var tot = Math.ceil(state.lore.length / LORE_PER_PAGE);
@@ -401,25 +381,20 @@ function drawLorePanel(L, mx, my) {
 function drawMetaPanel(L, mx, my) {
     var x = L.cntX, y = L.cntY, w = L.cntW;
     Renderer.drawString("&f&lItem Meta", x, y, true); y += 16;
-
     Renderer.drawRect(Renderer.color(14,16,26,215), x, y, w, 18);
     border1(x, y, w, 18, BORDER);
     Renderer.drawString("&8ID: &7" + state.itemId, x+4, y+3, true);
     y += 22;
-
     Renderer.drawRect(Renderer.color(14,16,26,215), x, y, w, 18);
     border1(x, y, w, 18, BORDER);
     Renderer.drawString("&8Type: &b" + state.itemType, x+4, y+3, true);
     y += 22;
-
     drawField("Damage", ""+state.damage,    x, y, w, editingField==="damage",    "0");   y += 22;
     drawField("Count",  ""+state.count,     x, y, w, editingField==="count",     "1");   y += 22;
     drawField("Flags",  ""+state.hideFlags, x, y, w, editingField==="hideFlags", "63");  y += 22;
-
     if (state.itemId.indexOf("leather") !== -1) {
         drawField("Hex", state.hex, x, y, w, editingField==="hex", "#RRGGBB"); y += 22;
     }
-
     var modelBtnHov = mx >= x && mx <= x+w && my >= y && my <= y+20;
     var modelLabel  = state.itemModel ? "&7"+state.itemModel.replace("minecraft:","") : "&8click to pick...";
     Renderer.drawRect(modelBtnHov ? Renderer.color(30,38,60,240) : Renderer.color(18,20,36,220), x, y, w, 20);
@@ -438,14 +413,21 @@ function drawMetaPanel(L, mx, my) {
         Renderer.drawString("&c✖", clrX+3, y+5, true);
     }
     y += 24;
-
     drawToggle("Unbreakable", state.unbreak, x, y, w, mx, my); y += 22;
     drawToggle("Glow",        state.glow,    x, y, w, mx, my); y += 22;
-
     if (state.enchants.length > 0) {
         Renderer.drawString("&8Enchants: &d" + state.enchants.map(function(e){
             return "id:"+e.id+" lvl:"+e.lvl;
         }).join(", "), x, y, true);
+        y += 14;
+    }
+    // Show ExtraAttributes as read-only info
+    if (state.extraAttributes) {
+        Renderer.drawRect(Renderer.color(20,14,34,200), x, y, w, 16);
+        border1(x, y, w, 16, Renderer.color(60,40,100,180));
+        var eaKeys = Object.keys(state.extraAttributes).join(", ");
+        if (Renderer.getStringWidth(eaKeys) > w - 60) eaKeys = eaKeys.substring(0,20) + "...";
+        Renderer.drawString("&8ExtraAttr: &5\u2605 &8" + eaKeys, x+4, y+3, true);
     }
 }
 
@@ -470,20 +452,16 @@ function drawSavePanel(L, mx, my) {
 
 gui.registerDraw(function(mx, my) {
     var L = getLayout();
-
     Renderer.drawRect(DARK, L.pX+5, L.pY+5, L.pW, L.pH);
     Renderer.drawRect(PANEL, L.pX, L.pY, L.pW, L.pH);
     Renderer.drawRect(GOLD, L.pX, L.pY, 2, L.pH);
     border1(L.pX, L.pY, L.pW, L.pH, BORDER);
-
     Renderer.drawRect(HDR_C, L.pX+2, L.pY, L.pW-2, HDR);
     Renderer.drawRect(Renderer.color(198,148,32,60), L.pX+2, L.pY+HDR-1, L.pW-2, 1);
     var hName = stripColor(state.name) || state.itemId.replace("minecraft:","");
     Renderer.drawString("&6Item Editor &8— &7" + hName + " &8[" + state.itemType + "]", L.pX+10, L.pY+8, true);
-
     Renderer.drawRect(Renderer.color(52,55,82,140), L.secX+SEC_W+3, L.secY, 1, L.secH);
     Renderer.drawRect(Renderer.color(52,55,82,140), L.cntX+CNT_W+3, L.cntY, 1, L.prvH);
-
     for (var si = 0; si < SECTIONS.length; si++) {
         var sec  = SECTIONS[si];
         var sy   = L.secY + si*34;
@@ -497,10 +475,8 @@ gui.registerDraw(function(mx, my) {
         border1(L.secX, sy, SEC_W, 30, isSel ? GOLD : BORDER);
         Renderer.drawString((isSel?"&f":"&8")+sec.label, L.secX+8, sy+9, true);
     }
-
     Renderer.drawRect(Renderer.color(16,18,30,180), L.cntX, L.cntY, L.cntW, L.cntH);
     border1(L.cntX, L.cntY, L.cntW, L.cntH, BORDER);
-
     if (modelPickerOpen) {
         drawModelPicker(L, mx, my);
     } else {
@@ -509,9 +485,7 @@ gui.registerDraw(function(mx, my) {
         else if (activeSection === "meta") drawMetaPanel(L, mx, my);
         else if (activeSection === "save") drawSavePanel(L, mx, my);
     }
-
     drawPreviewPanel(L, mx, my);
-
     Renderer.drawRect(Renderer.color(14,16,26,245), L.pX+2, L.fY, L.pW-2, 22);
     Renderer.drawRect(Renderer.color(198,148,32,50), L.pX+2, L.fY, L.pW-2, 1);
     Renderer.drawString("&8ESC close  ·  Enter confirm  ·  Click fields to edit", L.pX+PAD, L.fY+5, true);
@@ -526,37 +500,28 @@ gui.registerScrolled(function(mx, my, dir) {
 
 gui.registerClicked(function(mx, my, btn) {
     var L = getLayout();
-
     if (modelPickerOpen) {
         var closeX = L.cntX + L.cntW - 50;
-        if (mx >= closeX && mx <= closeX+50 && my >= L.cntY && my <= L.cntY+14) {
-            modelPickerOpen = false; return;
-        }
+        if (mx >= closeX && mx <= closeX+50 && my >= L.cntY && my <= L.cntY+14) { modelPickerOpen = false; return; }
         if (mx >= L.cntX && mx <= L.cntX+L.cntW && my >= L.cntY+38 && my <= L.cntY+38+MODEL_PER_PAGE*17) {
             var rowIdx = Math.floor((my - (L.cntY+38)) / 17) + modelPickerScroll;
             var models = getFilteredModels();
             if (rowIdx >= 0 && rowIdx < models.length) {
                 state.itemModel  = models[rowIdx];
-                modelPickerOpen  = false;
-                modelSearch      = "";
-                modelSearchActive = false;
+                modelPickerOpen  = false; modelSearch = ""; modelSearchActive = false;
                 setStatus("&aModel set: &e" + models[rowIdx].replace("minecraft:",""));
             }
             return;
         }
-        if (mx >= L.cntX && mx <= L.cntX+L.cntW && my >= L.cntY+16 && my <= L.cntY+34) {
-            modelSearchActive = true; return;
-        }
+        if (mx >= L.cntX && mx <= L.cntX+L.cntW && my >= L.cntY+16 && my <= L.cntY+34) { modelSearchActive = true; return; }
         modelPickerOpen = false; return;
     }
-
     for (var si = 0; si < SECTIONS.length; si++) {
         var sy = L.secY + si*34;
         if (mx >= L.secX && mx <= L.secX+SEC_W && my >= sy && my <= sy+30) {
             activeSection = SECTIONS[si].id; editingField = null; return;
         }
     }
-
     if      (activeSection === "name") handleNameClick(L, mx, my, btn);
     else if (activeSection === "lore") handleLoreClick(L, mx, my, btn);
     else if (activeSection === "meta") handleMetaClick(L, mx, my, btn);
@@ -567,7 +532,7 @@ function handleNameClick(L, mx, my, btn) {
     var x = L.cntX, y = L.cntY+16, w = L.cntW;
     if (mx >= x && mx <= x+w && my >= y && my <= y+20) { editingField = "name"; return; }
     y += 26+12;
-    var cs     = 14;
+    var cs = 14;
     var colors = ["&0","&1","&2","&3","&4","&5","&6","&7","&8","&9","&a","&b","&c","&d","&e","&f"];
     for (var ci = 0; ci < colors.length; ci++) {
         var cx = x+ci*(cs+1);
@@ -588,17 +553,14 @@ function handleNameClick(L, mx, my, btn) {
 
 function handleLoreClick(L, mx, my, btn) {
     var x = L.cntX, y = L.cntY, w = L.cntW;
-
     var hasClip = _externalLoreClipboard && _externalLoreClipboard.length > 0;
     var pasteW  = Renderer.getStringWidth("Paste " + (hasClip ? "("+_externalLoreClipboard.length+")" : "")) + 10;
     var pasteX  = x + w - pasteW;
     if (hasClip && mx >= pasteX && mx <= pasteX+pasteW && my >= y-1 && my <= y+11) {
         _externalLoreClipboard.forEach(function(l) { state.lore.push(l); });
         setStatus("&aPasted &e" + _externalLoreClipboard.length + " &7lines");
-        _externalLoreClipboard = null;
-        return;
+        _externalLoreClipboard = null; return;
     }
-
     y += 16;
     var start = lorePage * LORE_PER_PAGE;
     var end   = Math.min(start+LORE_PER_PAGE, state.lore.length);
@@ -615,9 +577,7 @@ function handleLoreClick(L, mx, my, btn) {
             if (mx >= delX && mx <= delX+16 && my >= lineY && my <= lineY+18) {
                 state.lore.splice(li,1); editingField=null; return;
             }
-            if (mx >= x && mx <= x+lineW && my >= lineY && my <= lineY+18) {
-                editingField = "lore"+li; return;
-            }
+            if (mx >= x && mx <= x+lineW && my >= lineY && my <= lineY+18) { editingField = "lore"+li; return; }
         } else if (li === state.lore.length) {
             if (mx >= x && mx <= x+w && my >= lineY && my <= lineY+18) {
                 state.lore.push(""); editingField = "lore"+(state.lore.length-1); return;
@@ -640,16 +600,14 @@ function handleMetaClick(L, mx, my, btn) {
     if (state.itemId.indexOf("leather") !== -1) {
         if (mx>=x&&mx<=x+w&&my>=y&&my<=y+20) { editingField="hex"; return; } y+=22;
     }
-    var pickW   = Renderer.getStringWidth("Pick")+10;
-    var clearW  = Renderer.getStringWidth("✖")+8;
-    var pickX   = x+w-pickW-2;
-    var clearX  = x+w-pickW-clearW-4;
+    var pickW  = Renderer.getStringWidth("Pick")+10;
+    var clearW = Renderer.getStringWidth("✖")+8;
+    var pickX  = x+w-pickW-2;
+    var clearX = x+w-pickW-clearW-4;
     if (mx>=pickX&&mx<=pickX+pickW&&my>=y+2&&my<=y+18) {
         modelPickerOpen=true; modelSearch=""; modelPickerScroll=0; modelSearchActive=false; editingField=null; return;
     }
-    if (state.itemModel && mx>=clearX&&mx<=clearX+clearW&&my>=y+2&&my<=y+18) {
-        state.itemModel=""; return;
-    }
+    if (state.itemModel && mx>=clearX&&mx<=clearX+clearW&&my>=y+2&&my<=y+18) { state.itemModel=""; return; }
     y+=24;
     if (mx>=x&&mx<=x+w&&my>=y&&my<=y+18) { state.unbreak=!state.unbreak; return; } y+=22;
     if (mx>=x&&mx<=x+w&&my>=y&&my<=y+18) { state.glow=!state.glow; return; } y+=22;
@@ -688,7 +646,7 @@ gui.registerKeyTyped(function(ch, code) {
         if (editingField==="savePath")   { savePath=savePath.slice(0,-1);               return; }
         if (editingField==="itemModel")  { state.itemModel=state.itemModel.slice(0,-1); return; }
         if (editingField==="hex")        { state.hex=state.hex.slice(0,-1);             return; }
-        if (editingField==="damage")     { editBuffer=editBuffer.slice(0,-1); state.damage=parseInt(editBuffer)||0;               return; }
+        if (editingField==="damage")     { editBuffer=editBuffer.slice(0,-1); state.damage=parseInt(editBuffer)||0;                return; }
         if (editingField==="count")      { editBuffer=editBuffer.slice(0,-1); state.count=Math.max(1,parseInt(editBuffer)||1);    return; }
         if (editingField==="hideFlags")  { editBuffer=editBuffer.slice(0,-1); state.hideFlags=Math.min(63,parseInt(editBuffer)||0); return; }
         var lm = editingField&&editingField.match(/^lore(\d+)$/);
@@ -735,23 +693,67 @@ function loadFromHeld() {
         state.itemModel = tag.ItemModel ? (""+tag.ItemModel) : "";
         state.name      = disp.Name ? (""+disp.Name).replace(/\u00a7/g,"&") : stripColor(""+item.getName());
 
-        if (disp.Lore && disp.Lore.length > 0) {
-            state.lore = disp.Lore.map(function(l) { return (""+l).replace(/\u00a7/g,"&"); });
+        // Lore — may be numeric-keyed object or array from toObject()
+        if (disp.Lore) {
+            var loreRaw = Array.isArray(disp.Lore) ? disp.Lore
+                : Object.keys(disp.Lore).sort(function(a,b){return parseInt(a)-parseInt(b);}).map(function(k){return disp.Lore[k];});
+            state.lore = loreRaw.map(function(l){ return (""+l).replace(/\u00a7/g,"&"); });
         } else {
-            state.lore = cleanLore(item.getLore()).slice(1).map(function(l) { return (""+l).replace(/\u00a7/g,"&"); });
+            state.lore = cleanLore(item.getLore()).slice(1).map(function(l){ return (""+l).replace(/\u00a7/g,"&"); });
         }
 
-        var allEnch  = tag.ench||[];
-        state.glow   = allEnch.some(function(e){return e.id===0&&e.lvl===1;});
+        // Enchantments — may be numeric-keyed object or array
+        var allEnch = [];
+        if (tag.ench) {
+            allEnch = Array.isArray(tag.ench) ? tag.ench
+                : Object.keys(tag.ench).sort(function(a,b){return parseInt(a)-parseInt(b);}).map(function(k){return tag.ench[k];});
+        }
+        state.glow    = allEnch.some(function(e){return e.id===0&&e.lvl===1;});
         state.enchants = allEnch.filter(function(e){return !(e.id===0&&e.lvl===1);});
-        state.hex    = (disp.color!==undefined) ? "#"+((disp.color>>>0)&0xFFFFFF).toString(16).padStart(6,"0").toUpperCase() : "";
-        try { state.texture = tag.SkullOwner.Properties.textures[0].Value; } catch(_) { state.texture=""; }
+
+        state.hex = (disp.color!==undefined) ? "#"+((disp.color>>>0)&0xFFFFFF).toString(16).padStart(6,"0").toUpperCase() : "";
+
+        // Skull texture
+        try { state.texture = tag.SkullOwner.Properties.textures[0].Value; } catch(_) {
+            try {
+                var texList = tag.SkullOwner.Properties.textures;
+                var first = texList[0] !== undefined ? texList[0] : texList["0"];
+                state.texture = first ? "" + first.Value : "";
+            } catch(_2) { state.texture = ""; }
+        }
+
+        // Full SkullOwner compound — preserved verbatim
+        state.skullOwner = tag.SkullOwner || null;
+
         state.itemType = detectType(state.itemId);
-        try { state.extraAttributes = tag.ExtraAttributes || null; } catch(_) { state.extraAttributes = null; }
-        savePath       = stripColor(state.name).replace(/[^a-zA-Z0-9_\-]/g,"_").substring(0,24)||"item";
+
+        // ── ExtraAttributes — preserved verbatim, never modified ──────────
+        state.extraAttributes = tag.ExtraAttributes || null;
+
+        savePath = stripColor(state.name).replace(/[^a-zA-Z0-9_\-]/g,"_").substring(0,24)||"item";
         setStatus("&aLoaded: &f"+stripColor(state.name));
         return true;
     } catch(e) { msg("&cLoad error: "+e); return false; }
+}
+
+function buildNBT(obj) {
+    if (obj === null || obj === undefined) return "{}";
+    if (typeof obj === "boolean") return obj ? "1b" : "0b";
+    if (typeof obj === "number")  return Number.isInteger(obj) ? String(obj) : obj.toFixed(4) + "f";
+    if (typeof obj === "string")  return '"' + obj.replace(/\\/g,"\\\\").replace(/"/g,'\\"') + '"';
+    if (Array.isArray(obj))       return "[" + obj.map(buildNBT).join(",") + "]";
+    // Numeric-keyed object = MC list
+    var keys = Object.keys(obj);
+    if (keys.length > 0 && keys.every(function(k){ return /^\d+$/.test(k); })) {
+        var maxI = Math.max.apply(null, keys.map(Number));
+        var parts = [];
+        for (var i = 0; i <= maxI; i++) {
+            var v = obj[i] !== undefined ? obj[i] : (obj[""+i] !== undefined ? obj[""+i] : null);
+            parts.push(i + ":" + buildNBT(v));
+        }
+        return "[" + parts.join(",") + "]";
+    }
+    return "{" + Object.keys(obj).map(function(k){ return k+":"+buildNBT(obj[k]); }).join(",") + "}";
 }
 
 function applyToHeld() {
@@ -764,10 +766,16 @@ function applyToHeld() {
         var IS=Java.type("net.minecraft.item.ItemStack");
         var NBT=Java.type("net.minecraft.nbt.JsonToNBT");
         var IR=Java.type("net.minecraft.item.Item");
-        var tagObj={}, disp={};
+
+        var tagObj={};
+        var disp={};
         if (state.name) disp.Name=(""+state.name).replace(/&([0-9a-fk-or])/gi,"\u00a7$1");
-        var loreConv=state.lore.map(function(l){return (""+l).replace(/&([0-9a-fk-or])/gi,"\u00a7$1");});
-        if (loreConv.length) disp.Lore=loreConv;
+        var loreConv=state.lore.map(function(l){ return (""+l).replace(/&([0-9a-fk-or])/gi,"\u00a7$1"); });
+        if (loreConv.length) {
+            var loreObj = {};
+            loreConv.forEach(function(l,i){ loreObj[i]=l; });
+            disp.Lore = loreObj;
+        }
         if (state.hex&&state.itemId.indexOf("leather")!==-1) disp.color=parseInt(state.hex.replace("#",""),16);
         if (Object.keys(disp).length) tagObj.display=disp;
         if (state.unbreak) tagObj.Unbreakable=1;
@@ -775,15 +783,25 @@ function applyToHeld() {
         if (state.itemModel) tagObj.ItemModel=state.itemModel;
         var ench=state.enchants.slice();
         if (state.glow) ench.push({id:0,lvl:1});
-        if (ench.length>0) tagObj.ench=ench;
-        function buildNBT(obj){
-            if(obj===null||obj===undefined)return"{}";
-            if(typeof obj==="boolean")return obj?"1b":"0b";
-            if(typeof obj==="number")return Number.isInteger(obj)?String(obj):obj.toFixed(4)+"f";
-            if(typeof obj==="string")return'"'+obj.replace(/\\/g,"\\\\").replace(/"/g,'\\"')+'"';
-            if(Array.isArray(obj))return"["+obj.map(buildNBT).join(",")+"]";
-            return"{"+Object.keys(obj).map(function(k){return k+":"+buildNBT(obj[k]);}).join(",")+"}";
+        if (ench.length>0) {
+            var enchObj = {};
+            ench.forEach(function(e,i){ enchObj[i]=e; });
+            tagObj.ench = enchObj;
         }
+
+        // ── SkullOwner — preserve original compound verbatim ─────────────
+        if (state.itemId.indexOf("skull") !== -1 && state.skullOwner) {
+            tagObj.SkullOwner = state.skullOwner;
+        } else if (state.itemId.indexOf("skull") !== -1 && state.texture) {
+            tagObj.SkullOwner = { Id:"00000000-0000-0000-0000-000000000000",
+                Properties:{ textures:{ 0:{ Value:state.texture } } } };
+        }
+
+        // ── ExtraAttributes — always re-inject verbatim ───────────────────
+        if (state.extraAttributes) {
+            tagObj.ExtraAttributes = state.extraAttributes;
+        }
+
         var mc=IR.func_111206_d(state.itemId);
         var stk=new IS(mc,state.count,state.damage);
         var nbt=buildNBT(tagObj);
@@ -791,20 +809,6 @@ function applyToHeld() {
         Client.sendPacket(new C10(Player.getHeldItemIndex()+36,stk));
         setStatus("&a✔ Applied to held item!");
     } catch(e){ setStatus("&cApply error: "+e); }
-}
-
-function buildNbtValueEdit(obj) {
-    if (obj === null || obj === undefined) return "{}";
-    if (typeof obj === "boolean") return obj ? "1b" : "0b";
-    if (typeof obj === "number") return Number.isInteger(obj) ? String(obj) : obj.toFixed(4) + "f";
-    if (typeof obj === "string") return '"' + (""+obj).replace(/\\/g,"\\\\").replace(/"/g,'\\"') + '"';
-    if (Array.isArray(obj)) {
-        return "[" + obj.map(function(v,i){ return i+":"+buildNbtValueEdit(v); }).join(",") + "]";
-    }
-    if (typeof obj === "object") {
-        return "{" + Object.keys(obj).map(function(k){ return k+":"+buildNbtValueEdit(obj[k]); }).join(",") + "}";
-    }
-    return ""+obj;
 }
 
 function saveAsMig() {
@@ -827,26 +831,47 @@ function saveAsMig() {
         if(state.texture&&state.itemId.indexOf("skull")!==-1) out+='    Texture: "'+state.texture+'"\n';
         if(state.itemModel) out+='    ItemModel: "'+state.itemModel+'"\n';
         if(state.enchants.length>0) out+="    Enchants: "+JSON.stringify(state.enchants.map(function(e){return{id:e.id,lvl:e.lvl};}))+"\n";
+
+        // ── SkullOwner — full compound as JSON for lossless round-trip ────
+        if (state.itemId.indexOf("skull") !== -1 && state.skullOwner) {
+            try { out += "\n    SkullOwnerJSON: " + JSON.stringify(state.skullOwner) + "\n"; } catch(_) {}
+        }
+
+        // ── ExtraAttributes — full compound as JSON ───────────────────────
+        if (state.extraAttributes && Object.keys(state.extraAttributes).length > 0) {
+            try { out += "\n    ExtraAttributesJSON: " + JSON.stringify(state.extraAttributes) + "\n"; } catch(_) {}
+        }
+
         out+="\n    Lore: [\n";
         state.lore.forEach(function(l){out+='        "'+l.replace(/"/g,'\\"')+'"\n';});
         out+="    ]\n\n}\n";
         FileLib.write(dir, file, out);
 
+        // .give command — also preserves SkullOwner + ExtraAttributes
         var nbtObj = {};
         if (state.hideFlags) nbtObj.HideFlags = state.hideFlags;
         if (state.unbreak)   nbtObj.Unbreakable = 1;
         var dispObj = {};
         if (state.name) dispObj.Name = (""+state.name).replace(/&([0-9a-fk-or])/gi,"\u00a7$1");
-        if (state.lore.length > 0) dispObj.Lore = state.lore.map(function(l){ return (""+l).replace(/&([0-9a-fk-or])/gi,"\u00a7$1"); });
+        if (state.lore.length > 0) {
+            var loreObj2 = {};
+            state.lore.forEach(function(l,i){ loreObj2[i]=(""+l).replace(/&([0-9a-fk-or])/gi,"\u00a7$1"); });
+            dispObj.Lore = loreObj2;
+        }
         if (state.hex && state.itemId.indexOf("leather")!==-1) dispObj.color = parseInt(state.hex.replace("#",""),16);
         if (Object.keys(dispObj).length > 0) nbtObj.display = dispObj;
-        var enchArr = state.enchants.slice();
-        if (state.glow) enchArr.push({id:0,lvl:1});
-        if (enchArr.length > 0) nbtObj.ench = enchArr;
+        var enchArr2 = state.enchants.slice();
+        if (state.glow) enchArr2.push({id:0,lvl:1});
+        if (enchArr2.length > 0) {
+            var enchObj2 = {};
+            enchArr2.forEach(function(e,i){ enchObj2[i]=e; });
+            nbtObj.ench = enchObj2;
+        }
         if (state.itemModel) nbtObj.ItemModel = state.itemModel;
+        if (state.itemId.indexOf("skull") !== -1 && state.skullOwner) nbtObj.SkullOwner = state.skullOwner;
         if (state.extraAttributes) nbtObj.ExtraAttributes = state.extraAttributes;
-        var giveCmd = "/give @p " + state.itemId + " " + state.count + " " + state.damage + " " + buildNbtValueEdit(nbtObj);
-        FileLib.write(dir, file.replace(/\.mig$/, ".give"), giveCmd + "\n");
+        var giveCmd = "/give @p " + state.itemId + " " + state.count + " " + state.damage + " " + buildNBT(nbtObj);
+        FileLib.write(dir, file.replace(/\.mig$/,".give"), giveCmd + "\n");
 
         lastSavedPath = path;
         setStatus("&a✔ Saved — .mig & .give");

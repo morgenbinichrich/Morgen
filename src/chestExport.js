@@ -96,61 +96,155 @@ function countChestItems() {
     } catch(_) { return 0; }
 }
 
+// ─── Key for deduplication ────────────────────────────────────────────────────
+// Two items are "the same" if they have identical id, damage, display name and
+// lore.  Skull texture is intentionally part of the key so different heads are
+// NOT merged.
+function itemKey(item) {
+    var tag  = item.tag || {};
+    var disp = tag.display || {};
+    var name = disp.Name ? "" + disp.Name : item.name;
+
+    // Normalise lore to sorted string
+    var lore = "";
+    if (disp.Lore) {
+        var loreArr = Array.isArray(disp.Lore)
+            ? disp.Lore
+            : Object.keys(disp.Lore).sort(function(a,b){return parseInt(a)-parseInt(b);}).map(function(k){return disp.Lore[k];});
+        lore = loreArr.join("|");
+    }
+
+    // Include skull texture in key so different heads stay separate
+    var texture = "";
+    if (item.itemId.indexOf("skull") !== -1 && tag.SkullOwner) {
+        try {
+            var texList = tag.SkullOwner.Properties.textures;
+            var first   = Array.isArray(texList) ? texList[0] : (texList[0] !== undefined ? texList[0] : texList["0"]);
+            if (first) texture = "" + first.Value;
+        } catch(_) {}
+    }
+
+    return item.itemId + ":" + item.damage + ":" + name + ":" + lore + ":" + texture;
+}
+
+// ─── Build stacked item list ──────────────────────────────────────────────────
+// Merges identical items (same key) by summing their counts.
+function stackItems(items) {
+    var order  = [];   // preserves insertion order
+    var map    = {};   // key → merged item object
+
+    items.forEach(function(item) {
+        var k = itemKey(item);
+        if (map[k]) {
+            map[k].count += item.count;
+        } else {
+            // Deep-clone so we don't mutate the original
+            var clone = {
+                slot:   item.slot,
+                itemId: item.itemId,
+                name:   item.name,
+                damage: item.damage,
+                count:  item.count,
+                tag:    item.tag
+            };
+            map[k] = clone;
+            order.push(k);
+        }
+    });
+
+    return order.map(function(k) { return map[k]; });
+}
+
 function buildMultiMig(data) {
-    var items = data.items;
-    if (items.length === 0) return null;
     var colorChar = "&";
     var now = new Date();
 
+    // Stack duplicate items before exporting
+    var items = stackItems(data.items);
+    if (items.length === 0) return null;
+
     var mig = "";
-    mig += 'ITEM "chest_export" {\n\n';
-    mig += "    // Source: " + data.title.replace(/_/g, " ") + "\n";
-    mig += "    // Date: " + now.getFullYear() + "-" + pad2(now.getMonth()+1) + "-" + pad2(now.getDate()) + "\n";
-    mig += "    // Items: " + items.length + "\n\n";
-    mig += "}\n\n";
+    // ── Header comment (no dummy ITEM block) ─────────────────────────────────
+    mig += "# Chest export: " + data.title.replace(/_/g, " ") + "\n";
+    mig += "# Date: " + now.getFullYear() + "-" + pad2(now.getMonth()+1) + "-" + pad2(now.getDate()) + "\n";
+    mig += "# Items: " + items.length + " unique stacks\n\n";
 
     items.forEach(function(item) {
         var tag      = item.tag || {};
         var disp     = tag.display || {};
         var isUnbreak = tag.Unbreakable === 1;
-        var hasGlow   = !!(tag.ench && tag.ench.some(function(e){ return e.id===0&&e.lvl===1; }));
         var hideFlags = tag.HideFlags !== undefined ? tag.HideFlags : 63;
         var isLeather = item.itemId.toLowerCase().indexOf("leather") !== -1;
         var isSkull   = item.itemId.toLowerCase().indexOf("skull")   !== -1;
 
+        // Normalise enchantments (may be numeric-keyed object or array)
+        var allEnch = [];
+        if (tag.ench) {
+            allEnch = Array.isArray(tag.ench) ? tag.ench
+                : Object.keys(tag.ench).sort(function(a,b){return parseInt(a)-parseInt(b);}).map(function(k){return tag.ench[k];});
+        }
+        var hasGlow = allEnch.some(function(e) { return e.id === 0 && e.lvl === 1; });
+
+        // Normalise lore (may be numeric-keyed object or array)
+        var loreLines = [];
+        if (disp.Lore) {
+            var loreRaw = Array.isArray(disp.Lore) ? disp.Lore
+                : Object.keys(disp.Lore).sort(function(a,b){return parseInt(a)-parseInt(b);}).map(function(k){return disp.Lore[k];});
+            loreLines = loreRaw.map(function(l) { return ("" + l).replace(/\u00a7/g, colorChar); });
+        }
+
         var exportName = (disp.Name || item.name || item.itemId).replace(/\u00a7/g, colorChar);
 
-        var loreLines = [];
-        if (disp.Lore && disp.Lore.length) {
-            loreLines = disp.Lore.map(function(l) { return ("" + l).replace(/\u00a7/g, colorChar); });
-            if (loreLines.length > 0 && noColor(loreLines[0]).trim() === noColor(exportName).trim())
-                loreLines = loreLines.slice(1);
+        // Remove first lore line if it duplicates the display name
+        if (loreLines.length > 0 && noColor(loreLines[0]).trim() === noColor(exportName).trim()) {
+            loreLines = loreLines.slice(1);
         }
 
-        var texture = null;
+        // ── Per-item skull texture ────────────────────────────────────────────
+        // Read texture directly from THIS item's tag, not a shared variable.
+        var texture   = null;
+        var skullOwnerJSON = null;
         if (isSkull && tag.SkullOwner) {
-            try { texture = tag.SkullOwner.Properties.textures[0].Value; } catch(_) {}
+            try {
+                var texList = tag.SkullOwner.Properties.textures;
+                // textures may be numeric-keyed object {"0":{Value:"..."}} or array
+                var firstTex = Array.isArray(texList) ? texList[0]
+                    : (texList[0] !== undefined ? texList[0] : texList["0"]);
+                if (firstTex) texture = "" + firstTex.Value;
+            } catch(_) {}
+            try { skullOwnerJSON = JSON.stringify(tag.SkullOwner); } catch(_) {}
         }
+
         var hexColor = null;
         if (isLeather && disp.color !== undefined) hexColor = decToHex(disp.color);
 
         var enchStr = null;
         if (tag.ench) {
-            var real = tag.ench.filter(function(e){ return !(e.id===0&&e.lvl===1); });
-            if (real.length > 0) enchStr = JSON.stringify(real.map(function(e){ return {id:e.id, lvl:e.lvl}; }));
+            var real = allEnch.filter(function(e) { return !(e.id === 0 && e.lvl === 1); });
+            if (real.length > 0) enchStr = JSON.stringify(real.map(function(e) { return { id: e.id, lvl: e.lvl }; }));
         }
 
         mig += 'ITEM "' + item.itemId + '" {\n\n';
         mig += '    Name: "' + exportName.replace(/"/g, '\\"') + '"\n';
         mig += '    Amount: 1\n';
         mig += '    Count: ' + item.count + '\n\n';
-        mig += '    Damage: ' + item.damage + '\n';
-        mig += '    Unbreakable: ' + isUnbreak + '\n';
-        mig += '    Glow: ' + hasGlow + '\n';
-        mig += '    HideFlags: ' + hideFlags + '\n';
-        if (hexColor) mig += '    Hex: "' + hexColor + '"\n';
-        if (texture)  mig += '    Texture: "' + texture + '"\n';
-        if (enchStr)  mig += '    Enchants: ' + enchStr + '\n';
+        mig += '    Damage: '      + item.damage   + '\n';
+        mig += '    Unbreakable: ' + isUnbreak      + '\n';
+        mig += '    Glow: '        + hasGlow         + '\n';
+        mig += '    HideFlags: '   + hideFlags       + '\n';
+        if (hexColor)      mig += '    Hex: "' + hexColor + '"\n';
+        // Only write Texture if we don't have the full SkullOwnerJSON
+        if (texture && !skullOwnerJSON) mig += '    Texture: "' + texture + '"\n';
+        if (enchStr)       mig += '    Enchants: ' + enchStr + '\n';
+
+        // ── SkullOwnerJSON — full compound for lossless round-trip ──────────
+        if (skullOwnerJSON) mig += '\n    SkullOwnerJSON: ' + skullOwnerJSON + '\n';
+
+        // ── ExtraAttributes ─────────────────────────────────────────────────
+        if (tag.ExtraAttributes && Object.keys(tag.ExtraAttributes).length > 0) {
+            try { mig += '\n    ExtraAttributesJSON: ' + JSON.stringify(tag.ExtraAttributes) + '\n'; } catch(_) {}
+        }
+
         mig += '\n    Lore: [\n';
         loreLines.forEach(function(l) { mig += '        "' + l.replace(/"/g, '\\"') + '"\n'; });
         mig += '    ]\n\n}\n\n';
@@ -175,6 +269,9 @@ function doExport() {
     var migContent = buildMultiMig(data);
     if (!migContent) { msg("&cFailed to build .mig."); return; }
 
+    // Count unique stacks after merging
+    var stackedCount = stackItems(data.items).length;
+
     var now      = new Date();
     var stamp    = pad2(now.getHours()) + pad2(now.getMinutes()) + pad2(now.getSeconds());
     var subDir   = "housing";
@@ -193,18 +290,18 @@ function doExport() {
         return;
     }
 
-    flashMsg   = "&a✔ Exported &e" + data.items.length + "&a items";
+    flashMsg   = "&a✔ Exported &e" + stackedCount + "&a stacks";
     flashUntil = Date.now() + 3500;
-    ChatLib.chat(ChatLib.addColor("&8──────────────────────────────"));
+    ChatLib.chat(ChatLib.addColor("&8──────────────────────────────────────────"));
     msg("&a✔ Export Complete");
-    msg("  &7Items   &f" + data.items.length + " item" + (data.items.length !== 1 ? "s" : "") + " saved");
+    msg("  &7Slots   &f" + data.items.length + " items → &e" + stackedCount + " unique stack" + (stackedCount !== 1 ? "s" : ""));
     msg("  &7File    &e" + importPath + ".mig");
     var importComp = new TextComponent(ChatLib.addColor("  &7Action  "));
     var btnComp = new TextComponent(ChatLib.addColor("&a[ ▶ Import Now ]"));
     btnComp.setClick("run_command", "/mm import " + importPath);
-    btnComp.setHover("show_text", ChatLib.addColor("&7Click to spawn all &e" + data.items.length + " &7items\n&8/mm import " + importPath));
+    btnComp.setHover("show_text", ChatLib.addColor("&7Click to spawn all &e" + stackedCount + " &7stacks\n&8/mm import " + importPath));
     ChatLib.chat(new Message(importComp, btnComp));
-    ChatLib.chat(ChatLib.addColor("&8──────────────────────────────"));
+    ChatLib.chat(ChatLib.addColor("&8──────────────────────────────────────────"));
 }
 
 var _prevMouseDown = false;

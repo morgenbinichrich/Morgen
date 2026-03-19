@@ -21,10 +21,25 @@ export function getNextEmptySlot(start) {
     const inv = Player.getInventory();
     if (!inv) return -1;
 
+    // CT inventory slot indices:
+    //   0-8  = hotbar (same items as packet slots 36-44)
+    //   9-35 = main inventory
+    // C10 creative packet slot indices:
+    //   36-44 = hotbar
+    //   9-35  = main inventory
+
     if (Settings.spawnIntoHotbar) {
-        const hotbarIndex = (Settings.hotbarSlot || 1) - 1;
-        const hotbarSlot  = 36 + hotbarIndex;
-        return hotbarSlot;
+        // Search hotbar: read CT index 0-8, return packet slot 36-44
+        const baseIndex = (Settings.hotbarSlot || 1) - 1; // 0-based
+        for (let offset = 0; offset < 9; offset++) {
+            const ctIndex    = (baseIndex + offset) % 9;   // CT read index
+            const packetSlot = 36 + ctIndex;               // C10 packet slot
+            try {
+                const s = inv.getStackInSlot(ctIndex);
+                if (!s || s.getID() === 0) return packetSlot;
+            } catch (_) {}
+        }
+        // All hotbar slots occupied — fall through to inventory
     }
 
     const lo = (start !== undefined && start > 9) ? start : 9;
@@ -34,10 +49,19 @@ export function getNextEmptySlot(start) {
     for (let i = 9; i < lo; i++) {
         try { const s = inv.getStackInSlot(i); if (!s || s.getID() === 0) return i; } catch (_) {}
     }
-    for (let i = 36; i <= 44; i++) {
-        try { const s = inv.getStackInSlot(i); if (!s || s.getID() === 0) return i; } catch (_) {}
+    // Hotbar fallback (when not in hotbar mode and inventory is full)
+    for (let i = 0; i <= 8; i++) {
+        try { const s = inv.getStackInSlot(i); if (!s || s.getID() === 0) return 36 + i; } catch (_) {}
     }
     return -1;
+}
+
+// Detect numeric-keyed objects produced by CT's NBT.toObject() for MC lists
+// e.g. {"0":{Value:"..."},"1":{Value:"..."}}  →  [0:{Value:"..."},1:{Value:"..."}]
+function _isNumericKeyedObj(obj) {
+    if (!obj || typeof obj !== "object" || Array.isArray(obj)) return false;
+    var keys = Object.keys(obj);
+    return keys.length > 0 && keys.every(function(k) { return /^\d+$/.test(k); });
 }
 
 export function buildNBTString(obj) {
@@ -48,8 +72,19 @@ export function buildNBTString(obj) {
         var s = "" + obj;
         return '"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
     }
-    if (Array.isArray(obj))        return "[" + obj.map(buildNBTString).join(",") + "]";
+    // Native JS array
+    if (Array.isArray(obj)) return "[" + obj.map(function(v, i) { return i + ":" + buildNBTString(v); }).join(",") + "]";
     if (typeof obj === "object") {
+        // Minecraft NBT list deserialized as numeric-keyed object
+        if (_isNumericKeyedObj(obj)) {
+            var maxIdx = Math.max.apply(null, Object.keys(obj).map(Number));
+            var parts = [];
+            for (var i = 0; i <= maxIdx; i++) {
+                var val = obj[i] !== undefined ? obj[i] : (obj["" + i] !== undefined ? obj["" + i] : null);
+                parts.push(i + ":" + buildNBTString(val));
+            }
+            return "[" + parts.join(",") + "]";
+        }
         const pairs = Object.entries(obj).map(([k, v]) => k + ":" + buildNBTString(v));
         return "{" + pairs.join(",") + "}";
     }
@@ -73,6 +108,9 @@ export function createItem(data) {
         const texture     = data.texture;
         const itemModel   = data.itemModel;
         const enchants    = data.enchants;
+        // New: full SkullOwner compound (from SkullOwnerJSON field) and ExtraAttributes
+        const skullOwner      = data.skullOwner      || null;
+        const extraAttributes = data.extraAttributes || null;
 
         let hideFlags = data.hideFlags !== undefined ? data.hideFlags : Settings.defaultHideFlags;
         if (Settings.autoHideFlags && unbreakable) hideFlags = hideFlags | 4;
@@ -86,20 +124,14 @@ export function createItem(data) {
             ? slot : getNextEmptySlot();
         if (finalSlot === -1) { msg("&cNo empty slot available!"); return; }
 
+        // ── Build display compound ─────────────────────────────────────────
         const tagObj = {};
-
         const isLeather = id.toLowerCase().includes("leather");
         if (name || (lore && lore.length > 0) || (hex && isLeather)) {
             tagObj.display = {};
             if (name)                tagObj.display.Name  = String(name);
             if (lore && lore.length) tagObj.display.Lore  = lore.map(function(l) { return String(l); });
             if (hex && isLeather)    tagObj.display.color = parseInt(hex.replace("#", ""), 16);
-        }
-
-        if (id.toLowerCase().includes("skull") && texture) {
-            // Minecraft 1.8.9 skull NBT must use this exact structure.
-            // We bypass buildNBTString for this block and inject raw NBT directly.
-            tagObj._skullTexture = texture; // marker — handled below
         }
 
         if (unbreakable)                                       tagObj.Unbreakable = 1;
@@ -117,18 +149,30 @@ export function createItem(data) {
             console.log("[createItem] tagObj.display.Name raw: " + JSON.stringify(tagObj.display && tagObj.display.Name));
         }
 
-        // Build NBT — skull texture needs raw injection
-        var skullTex = tagObj._skullTexture || null;
-        delete tagObj._skullTexture;
-
+        // ── Build NBT string ───────────────────────────────────────────────
         var nbtStr = buildNBTString(tagObj);
 
-        if (skullTex) {
-            // Inject SkullOwner as raw NBT string — 1.8.9 format
-            var uuid = "" + java.util.UUID.randomUUID();
-            var skullNbt = 'SkullOwner:{Id:"' + uuid + '",Properties:{textures:[{Value:"' + skullTex + '"}]}}';
-            // Insert into existing NBT compound
-            nbtStr = nbtStr.slice(0, -1) + (nbtStr.length > 2 ? "," : "") + skullNbt + "}";
+        // ── SkullOwner injection ───────────────────────────────────────────
+        // Priority: full skullOwner compound > bare texture string
+        if (id.toLowerCase().includes("skull")) {
+            var skullNbt = "";
+            if (skullOwner) {
+                // Serialise the full compound using buildNBTString so numeric-keyed
+                // texture arrays become [0:{Value:"..."}] as required by MC 1.8.9
+                skullNbt = "SkullOwner:" + buildNBTString(skullOwner);
+            } else if (texture) {
+                var uuid = "" + java.util.UUID.randomUUID();
+                skullNbt = 'SkullOwner:{Id:"' + uuid + '",Properties:{textures:[{Value:"' + texture + '"}]}}';
+            }
+            if (skullNbt) {
+                nbtStr = nbtStr.slice(0, -1) + (nbtStr.length > 2 ? "," : "") + skullNbt + "}";
+            }
+        }
+
+        // ── ExtraAttributes injection ──────────────────────────────────────
+        if (extraAttributes) {
+            var eaNbt = "ExtraAttributes:" + buildNBTString(extraAttributes);
+            nbtStr = nbtStr.slice(0, -1) + (nbtStr.length > 2 ? "," : "") + eaNbt + "}";
         }
 
         if (Settings.debugMode) console.log("[createItem] NBT: " + nbtStr);

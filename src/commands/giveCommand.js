@@ -83,13 +83,38 @@ function checkStatFunctions(src) {
 }
 
 function checkLoreLines(src) {
-    var warnings = [], ls = src.indexOf("Lore:");
-    if (ls === -1) return warnings;
-    var ms = src.slice(ls).match(/"((?:[^"\\]|\\.)*)"/g);
+    var warnings = [];
+
+    // Find the Lore: [ ... ] block precisely — don't scan the whole file
+    // (SkullOwnerJSON / ExtraAttributesJSON / Texture strings are NOT lore)
+    var loreStart = src.indexOf("Lore:");
+    if (loreStart === -1) return warnings;
+
+    // Find the opening bracket
+    var bracketOpen = src.indexOf("[", loreStart);
+    if (bracketOpen === -1) return warnings;
+
+    // Find the matching closing bracket
+    var depth = 0, bracketClose = -1;
+    var inQ = false;
+    for (var ci = bracketOpen; ci < src.length; ci++) {
+        var ch = src[ci];
+        if (ch === '"' && src[ci-1] !== '\\') inQ = !inQ;
+        if (!inQ) {
+            if (ch === "[") depth++;
+            else if (ch === "]") { depth--; if (depth === 0) { bracketClose = ci; break; } }
+        }
+    }
+    if (bracketClose === -1) return warnings;
+
+    var loreBlock = src.slice(bracketOpen + 1, bracketClose);
+    var ms = loreBlock.match(/"((?:[^"\\]|\\.)*)"/g);
     if (!ms) return warnings;
+
     ms.forEach(function(m, i) {
-        var raw = m.slice(1,-1).replace(/&[0-9a-fk-or]/gi,"").replace(/\\"/g,'"');
-        if (raw.length > 50)
+        // Strip color codes before measuring length
+        var raw = m.slice(1, -1).replace(/&[0-9a-fk-or]/gi, "").replace(/\\"/g, '"');
+        if (raw.length > 100)
             warnings.push("Lore line " + (i+1) + " may be too long (" + raw.length + " chars)");
     });
     return warnings;
@@ -112,8 +137,8 @@ export function validateAndReport(pathArg, msgFn) {
     var dir   = "Morgen/imports" + (parts.length ? "/" + parts.join("/") : "");
     if (!file.endsWith(".mig")) file += ".mig";
     var raw;
-    try { raw = FileLib.read(dir, file); } catch(e) { msgFn("&cCould not read: &e" + pathArg); return false; }
-    if (!raw) { msgFn("&cFile not found: &e" + pathArg); return false; }
+    try { raw = FileLib.read(dir, file); } catch(e) { msgFn("&cCould not read: " + pathArg); return false; }
+    if (!raw) { msgFn("&cFile not found: " + pathArg); return false; }
     var result = validateMig(raw);
     ChatLib.chat(ChatLib.addColor("&8&m──────────────────────────────"));
     msgFn("&6Validator &8— &f" + file);
@@ -192,6 +217,11 @@ function extractBrackets(str, keyword) {
     return result;
 }
 
+function tryParseJSON(str) {
+    if (!str) return null;
+    try { return JSON.parse(str); } catch(_) { return null; }
+}
+
 function parseOneBlock(blockText) {
     var clean = stripMigComments(blockText);
     function field(regex, def)    { var m = clean.match(regex); return m ? m[1].trim() : def; }
@@ -208,6 +238,16 @@ function parseOneBlock(blockText) {
     var itemModel   = field(/^\s*ItemModel:\s*"([^"]+)"/m, null);
     var unbreakable = fieldBool(/^\s*Unbreakable:\s*(true|false|1|0)/im, Settings.defaultUnbreakable);
     var glow        = fieldBool(/^\s*Glow:\s*(true|false|1|0)/im,        Settings.defaultGlow);
+
+    // ── SkullOwnerJSON — full SkullOwner compound stored as JSON ─────────
+    var skullOwner = null;
+    var soLine = clean.match(/^\s*SkullOwnerJSON:\s*(\{[\s\S]+?\})\s*$/m);
+    if (soLine) skullOwner = tryParseJSON(soLine[1]);
+
+    // ── ExtraAttributesJSON — full ExtraAttributes compound stored as JSON
+    var extraAttributes = null;
+    var eaLine = clean.match(/^\s*ExtraAttributesJSON:\s*(\{[\s\S]+?\})\s*$/m);
+    if (eaLine) extraAttributes = tryParseJSON(eaLine[1]);
 
     var hexes = [hex];
     var hexLineMatch = clean.match(/^\s*Hex:\s*(.+)$/m);
@@ -262,7 +302,11 @@ function parseOneBlock(blockText) {
         }
     }
 
-    return { itemId, damage, amount, count, hideFlags, hex, hexes, texture, itemModel, unbreakable, glow, names, enchants, stats, lore };
+    return {
+        itemId, damage, amount, count, hideFlags, hex, hexes, texture, itemModel,
+        unbreakable, glow, names, enchants, stats, lore,
+        skullOwner, extraAttributes   // ← new fields
+    };
 }
 
 function parseMIG(raw) {
@@ -287,28 +331,84 @@ function parseMIG(raw) {
 function buildSlotPlan(items) {
     var inv = Player.getInventory(); if (!inv) return null;
 
-    if (Settings.spawnIntoHotbar) {
-        var baseHotbar = 36 + ((Settings.hotbarSlot || 1) - 1);
-        return items.map(function(_, i) {
-            var slot = 36 + ((((Settings.hotbarSlot || 1) - 1) + i) % 9);
-            return { slot: slot, stackWith: -1 };
-        });
+    // CT's Player.getInventory().getStackInSlot() uses these indices:
+    //   0-8   = hotbar slots (displayed as slots 1-9 in hotbar)
+    //   9-35  = main inventory
+    //   36-39 = armor slots
+    // The C10 creative packet uses a DIFFERENT numbering:
+    //   36-44 = hotbar slots 1-9
+    //   9-35  = main inventory
+    // So to CHECK if a hotbar slot is occupied we read index 0-8,
+    // but to SEND the packet we use index 36-44.
+
+    // Build virtual snapshot: key = PACKET slot (36-44 hotbar, 9-35 inventory)
+    var virtual = {};
+
+    // Hotbar: read slots 0-8 from CT inventory, map to packet slots 36-44
+    for (var h = 0; h <= 8; h++) {
+        var packetSlot = 36 + h;
+        try {
+            var hstack = inv.getStackInSlot(h);
+            if (hstack && hstack.getID() !== 0) {
+                virtual[packetSlot] = { empty: false };
+            } else {
+                virtual[packetSlot] = { empty: true };
+            }
+        } catch(_) { virtual[packetSlot] = { empty: true }; }
     }
 
-    var virtual = {};
-    for (var s = 9; s <= 44; s++) {
+    // Main inventory: read slots 9-35 (same in both CT and packet)
+    for (var m = 9; m <= 35; m++) {
         try {
-            var stack = inv.getStackInSlot(s);
-            if (stack && stack.getID() !== 0) {
-                virtual[s] = { id: ""+stack.getRegistryName(), damage: stack.getMetadata?stack.getMetadata():0,
-                               name: ""+stack.getName(), count: stack.getStackSize()||1, maxStack: 64, empty: false };
-            } else { virtual[s] = { empty: true, count: 0 }; }
-        } catch(_) { virtual[s] = { empty: true, count: 0 }; }
+            var mstack = inv.getStackInSlot(m);
+            if (mstack && mstack.getID() !== 0) {
+                virtual[m] = { id: ""+mstack.getRegistryName(), damage: mstack.getMetadata?mstack.getMetadata():0,
+                               name: ""+mstack.getName(), count: mstack.getStackSize()||1, maxStack: 64, empty: false };
+            } else { virtual[m] = { empty: true, count: 0 }; }
+        } catch(_) { virtual[m] = { empty: true, count: 0 }; }
     }
+
+    if (Settings.spawnIntoHotbar) {
+        var baseIndex = (Settings.hotbarSlot || 1) - 1; // 0-based hotbar index
+        var plan = [];
+        for (var ii = 0; ii < items.length; ii++) {
+            var item = items[ii], placed = false;
+
+            // Try hotbar packet slots 36-44, starting from baseIndex, skipping occupied
+            for (var offset = 0; offset < 9; offset++) {
+                var hotbarIdx  = (baseIndex + offset) % 9;
+                var hotbarSlot = 36 + hotbarIdx; // packet slot
+                if (virtual[hotbarSlot] && virtual[hotbarSlot].empty) {
+                    plan.push({ slot: hotbarSlot, stackWith: -1 });
+                    virtual[hotbarSlot] = { empty: false };
+                    baseIndex = (hotbarIdx + 1) % 9;
+                    placed = true;
+                    break;
+                }
+            }
+
+            // Hotbar full: fall through to main inventory 9-35
+            if (!placed) {
+                for (var s3 = 9; s3 <= 35; s3++) {
+                    if (virtual[s3] && virtual[s3].empty) {
+                        plan.push({ slot: s3, stackWith: -1 });
+                        virtual[s3] = { empty: false };
+                        placed = true; break;
+                    }
+                }
+            }
+
+            if (!placed) plan.push({ slot: -1, stackWith: -1 });
+        }
+        return plan;
+    }
+
+    // Normal mode: try stacking, then first empty slot (inventory first, hotbar last)
     var plan = [];
     for (var ii = 0; ii < items.length; ii++) {
         var item = items[ii], placed = false;
-        for (var s2 = 9; s2 <= 44; s2++) {
+        // Try stacking onto matching existing stack in main inventory
+        for (var s2 = 9; s2 <= 35; s2++) {
             var vs = virtual[s2];
             if (!vs || vs.empty) continue;
             if (vs.id===item.id && vs.damage===item.damage && vs.name===item.name &&
@@ -316,12 +416,22 @@ function buildSlotPlan(items) {
                 plan.push({ slot: s2, stackWith: s2 }); vs.count += item.count; placed = true; break;
             }
         }
+        // First empty slot in main inventory
         if (!placed) {
-            for (var s3 = 9; s3 <= 44; s3++) {
-                if (virtual[s3] && virtual[s3].empty) {
-                    plan.push({ slot: s3, stackWith: -1 });
-                    virtual[s3] = { id: item.id, damage: item.damage, name: item.name,
-                                    count: item.count, maxStack: 64, empty: false };
+            for (var s4 = 9; s4 <= 35; s4++) {
+                if (virtual[s4] && virtual[s4].empty) {
+                    plan.push({ slot: s4, stackWith: -1 });
+                    virtual[s4] = { empty: false };
+                    placed = true; break;
+                }
+            }
+        }
+        // Fall back to hotbar if inventory full
+        if (!placed) {
+            for (var s5 = 36; s5 <= 44; s5++) {
+                if (virtual[s5] && virtual[s5].empty) {
+                    plan.push({ slot: s5, stackWith: -1 });
+                    virtual[s5] = { empty: false };
                     placed = true; break;
                 }
             }
@@ -336,10 +446,23 @@ function spawnQueue(tasks, idx, onDone) {
     var task = tasks[idx];
     if (task.slot === -1) { msg("&cInventory full — stopped at " + idx + "/" + tasks.length); return; }
     try {
-        createItem({ id: task.id, damage: task.damage, count: task.count, slot: task.slot,
-                     name: task.name, lore: task.lore, unbreakable: task.unbreakable,
-                     glow: task.glow, hideFlags: task.hideFlags, hex: task.hex,
-                     texture: task.texture, itemModel: task.itemModel, enchants: task.enchants });
+        createItem({
+            id:              task.id,
+            damage:          task.damage,
+            count:           task.count,
+            slot:            task.slot,
+            name:            task.name,
+            lore:            task.lore,
+            unbreakable:     task.unbreakable,
+            glow:            task.glow,
+            hideFlags:       task.hideFlags,
+            hex:             task.hex,
+            texture:         task.texture,
+            itemModel:       task.itemModel,
+            enchants:        task.enchants,
+            skullOwner:      task.skullOwner      || null,   // ← new
+            extraAttributes: task.extraAttributes || null    // ← new
+        });
     } catch(err) {
         console.log("[mmimport] error at " + idx + ": " + err);
         msg("&cError on item " + (idx+1) + " — see console.");
@@ -394,20 +517,32 @@ function tasksFromJson(content, pathArg) {
         });
         var enchants = (d.enchants || []).map(function(e) { return { id: e.id, lvl: e.lvl }; });
         if (d.glow) enchants.push({ id: 0, lvl: 1 });
+
+        // Resolve skullOwner: prefer skullOwner JSON blob, fallback to bare texture
+        var skullOwner = d.skullOwner || null;
+        if (!skullOwner && d.texture) {
+            skullOwner = {
+                Id: "00000000-0000-0000-0000-000000000000",
+                Properties: { textures: { 0: { Value: d.texture } } }
+            };
+        }
+
         return [{
-            id:          d.itemId,
-            damage:      d.damage      || 0,
-            count:       d.count       || 1,
-            name:        colorize((""+d.name).replace(/&([0-9a-fk-or])/gi, "\u00a7$1")),
-            lore:        lore,
-            unbreakable: !!d.unbreakable,
-            glow:        false,
-            hideFlags:   d.hideFlags   !== undefined ? d.hideFlags : Settings.defaultHideFlags,
-            hex:         d.hex         || null,
-            texture:     d.texture     || null,
-            itemModel:   d.itemModel   || null,
-            enchants:    enchants,
-            _firstName:  d.name || pathArg
+            id:              d.itemId,
+            damage:          d.damage      || 0,
+            count:           d.count       || 1,
+            name:            colorize((""+d.name).replace(/&([0-9a-fk-or])/gi, "\u00a7$1")),
+            lore:            lore,
+            unbreakable:     !!d.unbreakable,
+            glow:            false,
+            hideFlags:       d.hideFlags   !== undefined ? d.hideFlags : Settings.defaultHideFlags,
+            hex:             d.hex         || null,
+            texture:         d.texture     || null,
+            itemModel:       d.itemModel   || null,
+            enchants:        enchants,
+            skullOwner:      skullOwner,
+            extraAttributes: d.extraAttributes || null,
+            _firstName:      d.name || pathArg
         }];
     }
 
@@ -434,19 +569,21 @@ function tasksFromJson(content, pathArg) {
         if (colM) hexVal = "#" + parseInt(colM[1]).toString(16).toUpperCase().padStart(6,"0");
 
         return [{
-            id:          idM   ? idM[1]              : "minecraft:stone",
-            damage:      damM  ? parseInt(damM[1])   : 0,
-            count:       cntM  ? parseInt(cntM[1])   : 1,
-            name:        nameM ? colorize(nameM[1].replace(/\\u00a7/g,"\u00a7")) : "",
-            lore:        loreLines,
-            unbreakable: false,
-            glow:        false,
-            hideFlags:   hfM   ? parseInt(hfM[1])    : Settings.defaultHideFlags,
-            hex:         hexVal,
-            texture:     texM  ? texM[1]             : null,
-            itemModel:   null,
-            enchants:    [],
-            _firstName:  pathArg
+            id:              idM   ? idM[1]            : "minecraft:stone",
+            damage:          damM  ? parseInt(damM[1]) : 0,
+            count:           cntM  ? parseInt(cntM[1]) : 1,
+            name:            nameM ? colorize(nameM[1].replace(/\\u00a7/g,"\u00a7")) : "",
+            lore:            loreLines,
+            unbreakable:     false,
+            glow:            false,
+            hideFlags:       hfM   ? parseInt(hfM[1])  : Settings.defaultHideFlags,
+            hex:             hexVal,
+            texture:         texM  ? texM[1]           : null,
+            itemModel:       null,
+            enchants:        [],
+            skullOwner:      null,
+            extraAttributes: null,
+            _firstName:      pathArg
         }];
     }
 
@@ -513,12 +650,32 @@ register("command", function() {
                     var finalHex = mig.hexes && mig.hexes.length > 0
                         ? (mig.hexes[i] !== undefined ? mig.hexes[i] : mig.hexes[mig.hexes.length-1])
                         : mig.hex;
-                    tasks.push({ id: mig.itemId, damage: mig.damage, count: mig.count,
-                                 name: colorize(""+rawName), lore: finalLore,
-                                 unbreakable: mig.unbreakable, glow: mig.glow,
-                                 hideFlags: mig.hideFlags, hex: finalHex,
-                                 texture: mig.texture, itemModel: mig.itemModel,
-                                 enchants: mig.enchants });
+
+                    // Resolve skullOwner: prefer full SkullOwnerJSON, fallback to Texture field
+                    var resolvedSkullOwner = mig.skullOwner || null;
+                    if (!resolvedSkullOwner && mig.texture) {
+                        resolvedSkullOwner = {
+                            Id: "00000000-0000-0000-0000-000000000000",
+                            Properties: { textures: { 0: { Value: mig.texture } } }
+                        };
+                    }
+
+                    tasks.push({
+                        id:              mig.itemId,
+                        damage:          mig.damage,
+                        count:           mig.count,
+                        name:            colorize(""+rawName),
+                        lore:            finalLore,
+                        unbreakable:     mig.unbreakable,
+                        glow:            mig.glow,
+                        hideFlags:       mig.hideFlags,
+                        hex:             finalHex,
+                        texture:         mig.texture,
+                        itemModel:       mig.itemModel,
+                        enchants:        mig.enchants,
+                        skullOwner:      resolvedSkullOwner,       // ← full compound
+                        extraAttributes: mig.extraAttributes || null  // ← extra data
+                    });
                 }
             });
         }

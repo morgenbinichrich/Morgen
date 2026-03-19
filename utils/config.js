@@ -261,20 +261,6 @@ class Settings {
     })
     creditMod = "Morgen v1.0.0";
 
-    @TextProperty({
-        name: "Authors",
-        description: "People who built this mod.",
-        category: "Credits"
-    })
-    creditAuthors = "[ITV] & MorgenBinIchRich";
-
-    @TextProperty({
-        name: "Description",
-        description: "What this mod does.",
-        category: "Credits"
-    })
-    creditDesc = "Item manager for Hypixel Housing";
-
     @ButtonProperty({
         name: "Open GitHub",
         description: "View the source code and report issues on GitHub.",
@@ -283,7 +269,7 @@ class Settings {
     })
     openGithub() {
         try {
-            java.awt.Desktop.getDesktop().browse(new java.net.URI("https://github.com"));
+            java.awt.Desktop.getDesktop().browse(new java.net.URI("https://github.com/morgenbinichrich/Morgen"));
         } catch(_) {}
     }
 

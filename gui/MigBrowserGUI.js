@@ -6,11 +6,18 @@ function loadImg(n) { try { return new Image(A + n); } catch(_) { return null; }
 var I_FOLDER = loadImg("folder.png"), I_MIG = loadImg("paper.png");
 var I_JSON   = loadImg("item.png"), I_TRASH = loadImg("bin_closed.png"), I_TRASH_OPEN = loadImg("bin.png");
 
-function drawFallback(x, y, isDir, isJson, isTrash) {
+function drawFallback(x, y, isDir, isJson, isTrash, isTrashOpen) {
     if (isTrash) {
-        Renderer.drawRect(Renderer.color(200,50,50,220), x+3, y+3, 10, 11);
-        Renderer.drawRect(Renderer.color(255,80,80,200), x+2, y+2, 12, 2);
-        Renderer.drawRect(Renderer.color(200,50,50,200), x+5, y+1, 6, 2);
+        // Open bin — lid lifted
+        if (isTrashOpen) {
+            Renderer.drawRect(Renderer.color(220,80,80,240), x+2, y+5, 12, 10);   // body
+            Renderer.drawRect(Renderer.color(255,120,120,220), x+1, y+2, 14, 2);  // open lid
+            Renderer.drawRect(Renderer.color(255,120,120,220), x+5, y+1, 6, 2);   // handle
+        } else {
+            Renderer.drawRect(Renderer.color(200,50,50,220), x+2, y+5, 12, 10);   // body
+            Renderer.drawRect(Renderer.color(220,70,70,220), x+1, y+3, 14, 3);    // closed lid
+            Renderer.drawRect(Renderer.color(220,70,70,200), x+5, y+1, 6, 2);     // handle
+        }
     } else if (isDir) {
         Renderer.drawRect(Renderer.color(230,180,40,220), x+1, y+5, 14, 9);
         Renderer.drawRect(Renderer.color(230,180,40,220), x+1, y+3, 7, 4);
@@ -27,9 +34,9 @@ function drawFallback(x, y, isDir, isJson, isTrash) {
     }
 }
 
-function drawImg(img, x, y, w, h, isDir, isJson, isTrash) {
+function drawImg(img, x, y, w, h, isDir, isJson, isTrash, isTrashOpen) {
     if (img) { try { Renderer.drawImage(img, x, y, w, h); return; } catch(_) {} }
-    drawFallback(x, y, isDir, isJson, isTrash);
+    drawFallback(x, y, isDir, isJson, isTrash, isTrashOpen);
 }
 
 var sndC, sndP;
@@ -71,9 +78,9 @@ function readShallow(path) {
         var e = d.listFiles(); if (!e) return r;
         for (var i = 0; i < e.length; i++) {
             var f = e[i], n = f.getName();
-            if (f.isDirectory())        r.push({ name: n, isDir: true,  isJson: false, rel: "" });
-            else if (n.endsWith(".mig")) r.push({ name: n, isDir: false, isJson: false, rel: "" });
-            else if (n.endsWith(".json"))r.push({ name: n, isDir: false, isJson: true,  rel: "" });
+            if (f.isDirectory())         r.push({ name: n, isDir: true,  isJson: false, rel: "" });
+            else if (n.endsWith(".mig"))  r.push({ name: n, isDir: false, isJson: false, rel: "" });
+            else if (n.endsWith(".json")) r.push({ name: n, isDir: false, isJson: true,  rel: "" });
         }
         r.sort(function(a, b) {
             if (a.isDir && !b.isDir) return -1; if (!a.isDir && b.isDir) return 1;
@@ -160,6 +167,26 @@ function parseMigPreview(raw) {
             }
         }
 
+        // Texture: first try Texture field, then SkullOwnerJSON
+        var texture = null;
+        var texM2 = clean.match(/^\s*Texture:\s*"([^"]+)"/m);
+        if (texM2) {
+            texture = texM2[1];
+        } else {
+            var soM = clean.match(/^\s*SkullOwnerJSON:\s*(\{[\s\S]+?\})\s*$/m);
+            if (soM) {
+                try {
+                    var so = JSON.parse(soM[1]);
+                    var texList = so.Properties && so.Properties.textures;
+                    if (texList) {
+                        var first = Array.isArray(texList) ? texList[0]
+                            : (texList[0] !== undefined ? texList[0] : texList["0"]);
+                        if (first) texture = "" + first.Value;
+                    }
+                } catch(_) {}
+            }
+        }
+
         return {
             id:      idM   ? idM[1]              : "minecraft:stone",
             names:   names.length > 0 ? names : ["Item"],
@@ -169,7 +196,7 @@ function parseMigPreview(raw) {
             glow:    glowM  ? glowM[1] === "true" : false,
             unbreak: unbrM  ? unbrM[1] === "true" : false,
             type:    typeM  ? typeM[1]             : null,
-            texture: (function() { var m = clean.match(/^\s*Texture:\s*"([^"]+)"/m); return m ? m[1] : null; })(),
+            texture: texture,
             lore:    lore
         };
     } catch(e) { return null; }
@@ -185,11 +212,20 @@ function getPreview(entry) {
         var data;
         if (entry.isJson) {
             var parsed = JSON.parse(raw);
+            var tex = parsed.texture || null;
+            if (!tex && parsed.skullOwner) {
+                try {
+                    var texList = parsed.skullOwner.Properties.textures;
+                    var first = Array.isArray(texList) ? texList[0]
+                        : (texList[0] !== undefined ? texList[0] : texList["0"]);
+                    if (first) tex = "" + first.Value;
+                } catch(_) {}
+            }
             data = {
                 id: parsed.itemId || "json", names: [parsed.name || entry.name.replace(/\.json$/, "")],
                 amount: 1, lore: parsed.lore || [], damage: parsed.damage || 0,
                 count: parsed.count || 1, glow: parsed.glow || false, unbreak: parsed.unbreakable || false,
-                type: parsed.itemType || null
+                type: parsed.itemType || null, texture: tex
             };
         } else {
             data = parseMigPreview(raw);
@@ -226,6 +262,29 @@ function layout() {
     };
 }
 
+// ─── Recalculate which row index + which button the mouse is on ───────────────
+// This is called both in Draw (for visual hover) AND in Click (for correct hit).
+// Returns { idx, onTrash, onEdit, rowY } or null if no row hit.
+function hitTestRows(mx, my) {
+    var start = scrollTop, end = Math.min(start + perPage, filtered.length);
+    var rowY  = L.lY;
+    for (var i = start; i < end; i++) {
+        var e    = filtered[i];
+        var rowH = searchMode && e.rel ? 26 : 21;
+        if (my >= rowY && my <= rowY + rowH - 1) {
+            // row hit — now check sub-buttons
+            var tx    = L.lX + L.lW - 36;
+            var ex    = L.lX + L.lW - 18;
+            var btnY  = rowY + Math.floor((rowH - 15) / 2);
+            var onT   = !e.isDir && mx >= tx && mx <= tx + 15 && my >= btnY && my <= btnY + 15;
+            var onE   = !e.isDir && mx >= ex && mx <= ex + 15 && my >= btnY && my <= btnY + 15;
+            return { idx: i, entry: e, onTrash: onT, onEdit: onE, rowY: rowY, rowH: rowH };
+        }
+        rowY += rowH + 1;
+    }
+    return null;
+}
+
 var GOLD   = Renderer.color(198, 148, 32, 255);
 var GOLD2  = Renderer.color(255, 200, 60, 255);
 var PANEL  = Renderer.color(13, 14, 21, 248);
@@ -247,18 +306,34 @@ function drawBtn(lbl, x, y, w, h, mx, my, hovCol) {
     Renderer.drawString("&f" + lbl, x + Math.floor((w-lw)/2), y + Math.floor(h/2)-3, true);
 }
 
+// ─── Skull rendering ──────────────────────────────────────────────────────────
+function drawSkullWithTexture(texture, x, y, scale) {
+    try {
+        var IS2  = Java.type("net.minecraft.item.ItemStack");
+        var IR2  = Java.type("net.minecraft.item.Item");
+        var NBT2 = Java.type("net.minecraft.nbt.JsonToNBT");
+        var mc   = IR2.func_111206_d("minecraft:skull");
+        var stk  = new IS2(mc, 1, 3); // damage:3 = player skull
+        if (texture) {
+            var nbt = '{SkullOwner:{Id:"00000000-0000-0000-0000-000000000001",'
+                    + 'Properties:{textures:[0:{Value:"' + texture + '"}]}}}';
+            stk.func_77982_d(NBT2.func_180713_a(nbt));
+        }
+        new Item(stk).draw(x, y, scale || 1);
+        return true;
+    } catch(_) { return false; }
+}
+
 function drawPreviewPanel(mx, my) {
-    var entry = hoverIdx >= 0 && hoverIdx < filtered.length ? filtered[hoverIdx] : null;
+    var hit = hitTestRows(mx, my);
+    var entry = hit ? hit.entry : null;
     if (!entry || entry.isDir) { previewEntry = null; return; }
     previewEntry = entry;
     var pv = getPreview(entry);
     if (!pv) return;
 
-    var lineH = 11;
-    var rows  = [];
-    pv.names.slice(0, 3).forEach(function(n, i) {
-        rows.push({ text: n.replace(/&([0-9a-fk-or])/gi, "\u00a7$1") });
-    });
+    var lineH = 11, rows = [];
+    pv.names.slice(0, 3).forEach(function(n) { rows.push({ text: n.replace(/&([0-9a-fk-or])/gi, "\u00a7$1") }); });
     if (pv.names.length > 3) rows.push({ text: "\u00a78+" + (pv.names.length-3) + " names" });
     var meta = "\u00a78" + pv.id.replace("minecraft:", "") + " · dmg:" + pv.damage;
     if (pv.amount > 1) meta += " · x" + pv.amount;
@@ -268,9 +343,7 @@ function drawPreviewPanel(mx, my) {
     if (pv.lore.length === 0) {
         rows.push({ text: "\u00a78(no lore)" });
     } else {
-        pv.lore.slice(0, 14).forEach(function(l) {
-            rows.push({ text: l === "" ? "\u00a78·" : l });
-        });
+        pv.lore.slice(0, 14).forEach(function(l) { rows.push({ text: l === "" ? "\u00a78·" : l }); });
         if (pv.lore.length > 14) rows.push({ text: "\u00a78+" + (pv.lore.length-14) + " more" });
     }
     var flags = [];
@@ -278,17 +351,11 @@ function drawPreviewPanel(mx, my) {
     if (pv.unbreak) flags.push("\u00a7aUnbreak");
     if (flags.length) { rows.push({ sep: true }); rows.push({ text: flags.join("  ") }); }
 
-    // Adaptive width — measure widest row
-    var minW = 120, maxW = 200;
-    var pvW = minW;
+    var minW = 120, maxW = 200, pvW = minW;
     rows.forEach(function(r) {
-        if (!r.sep) {
-            var rw = Renderer.getStringWidth(r.text.replace(/\u00a7./g, "")) + 20;
-            if (rw > pvW) pvW = rw;
-        }
+        if (!r.sep) { var rw = Renderer.getStringWidth(r.text.replace(/\u00a7./g,"")) + 20; if (rw > pvW) pvW = rw; }
     });
     pvW = Math.min(maxW, Math.max(minW, pvW));
-
     var pvH = 24 + rows.length * lineH + 8;
     var pvX = L.pvX, pvY = Math.min(L.pvY + 4, L.sh - pvH - 4);
 
@@ -299,37 +366,25 @@ function drawPreviewPanel(mx, my) {
     Renderer.drawRect(HDR_C, pvX+2, pvY, pvW-2, 20);
     Renderer.drawRect(Renderer.color(198,148,32,60), pvX+2, pvY+19, pvW-2, 1);
 
-    // Draw item icon — skull with texture if available
-    try {
-        var isSkull = pv.id && pv.id.indexOf("skull") !== -1;
-        if (isSkull && pv.texture) {
-            var IS2  = Java.type("net.minecraft.item.ItemStack");
-            var IR2  = Java.type("net.minecraft.item.Item");
-            var NBT2 = Java.type("net.minecraft.nbt.JsonToNBT");
-            var nbtStr = '{"SkullOwner":{"Id":"00000000-0000-0000-0000-000000000000","Properties":{"textures":[{"Value":"' + pv.texture + '"}]}}}';
-            var mcItm  = IR2.func_111206_d(pv.id);
-            var stk    = new IS2(mcItm, 1, 3);
-            stk.func_77982_d(NBT2.func_180713_a(nbtStr));
-            new Item(stk).draw(pvX + 4, pvY + 2, 1);
-        } else {
+    var isSkull = pv.id && pv.id.indexOf("skull") !== -1;
+    var drewIcon = false;
+    if (isSkull) drewIcon = drawSkullWithTexture(pv.texture || null, pvX+4, pvY+2, 1);
+    if (!drewIcon) {
+        try {
             var mcReg2 = Java.type("net.minecraft.item.Item").func_111206_d(pv.id);
             if (mcReg2) {
                 var mcStk2 = new (Java.type("net.minecraft.item.ItemStack"))(mcReg2, 1, pv.damage || 0);
                 var ctItem2 = new Item(mcStk2);
-                if (ctItem2 && ctItem2.getID() !== 0) ctItem2.draw(pvX + 4, pvY + 2, 1);
-                else drawImg(entry.isJson ? I_JSON : I_MIG, pvX+5, pvY+2, 15, 15, false, entry.isJson);
-            } else {
-                drawImg(entry.isJson ? I_JSON : I_MIG, pvX+5, pvY+2, 15, 15, false, entry.isJson);
+                if (ctItem2 && ctItem2.getID() !== 0) { ctItem2.draw(pvX+4, pvY+2, 1); drewIcon = true; }
             }
-        }
-    } catch(_) {
-        drawImg(entry.isJson ? I_JSON : I_MIG, pvX+5, pvY+2, 15, 15, false, entry.isJson);
+        } catch(_) {}
     }
+    if (!drewIcon) drawImg(entry.isJson ? I_JSON : I_MIG, pvX+5, pvY+2, 15, 15, false, entry.isJson);
 
     var fname = entry.name.replace(/\.(mig|json)$/, "");
     var fnameMax = pvW - 30;
-    while (fname.length > 1 && Renderer.getStringWidth(fname) > fnameMax) fname = fname.slice(0, -1);
-    if (entry.name.replace(/\.(mig|json)$/, "").length > fname.length) fname += "\u2026";
+    while (fname.length > 1 && Renderer.getStringWidth(fname) > fnameMax) fname = fname.slice(0,-1);
+    if (entry.name.replace(/\.(mig|json)$/,"").length > fname.length) fname += "\u2026";
     Renderer.drawString("\u00a7f" + fname + (entry.isJson ? "\u00a78.json" : "\u00a78.mig"), pvX+23, pvY+5, true);
 
     var ry = pvY + 23;
@@ -382,55 +437,70 @@ gui.registerDraw(function(mx, my) {
 
     Renderer.drawRect(Renderer.color(198,148,32,55), L.pX+2, L.lY-4, L.pW-2, 1);
 
-    hoverIdx = -1;
+    // Use hitTestRows to get current hover info for visual feedback
+    var hit = hitTestRows(mx, my);
+    hoverIdx = hit ? hit.idx : -1;
+
     var start = scrollTop, end = Math.min(start + perPage, filtered.length);
     if (filtered.length === 0)
         Renderer.drawString(searchMode ? "&8No results for \"&7" + searchText + "&8\"" : "&8No files here.", L.lX+4, L.lY+7, true);
 
     var rowY = L.lY;
     for (var i = start; i < end; i++) {
-        var e     = filtered[i];
-        var rowH  = searchMode && e.rel ? 26 : 21;
-        var hov   = mx >= L.lX && mx <= L.lX+L.lW && my >= rowY && my <= rowY+rowH-2;
-        if (hov) hoverIdx = i;
-        if (hov) {
+        var e    = filtered[i];
+        var rowH = searchMode && e.rel ? 26 : 21;
+        var isHovRow = (hoverIdx === i);
+
+        if (isHovRow) {
             Renderer.drawRect(Renderer.color(26,30,50,200), L.lX, rowY, L.lW, rowH);
             Renderer.drawRect(GOLD, L.lX, rowY, 2, rowH);
         }
-        var rowPv     = !e.isDir ? getPreview(e) : null;
-        var drewItem  = false;
+
+        var rowPv    = !e.isDir ? getPreview(e) : null;
+        var drewItem = false;
+
         if (rowPv && rowPv.id) {
             try {
-                var mcRegRow = Java.type("net.minecraft.item.Item").func_111206_d(rowPv.id);
-                if (mcRegRow) {
-                    var mcStkRow = new (Java.type("net.minecraft.item.ItemStack"))(mcRegRow, 1, 0);
-                    var ctRow    = new Item(mcStkRow);
-                    if (ctRow && ctRow.getID() !== 0) {
-                        ctRow.draw(L.lX + 4, rowY + (searchMode && e.rel ? 3 : 1), 1);
-                        drewItem = true;
+                var isSkullRow = rowPv.id.indexOf("skull") !== -1;
+                if (isSkullRow) {
+                    drewItem = drawSkullWithTexture(rowPv.texture || null, L.lX+4, rowY+(searchMode&&e.rel?3:1), 1);
+                } else {
+                    var mcRegRow = Java.type("net.minecraft.item.Item").func_111206_d(rowPv.id);
+                    if (mcRegRow) {
+                        var mcStkRow = new (Java.type("net.minecraft.item.ItemStack"))(mcRegRow, 1, rowPv.damage || 0);
+                        var ctRow    = new Item(mcStkRow);
+                        if (ctRow && ctRow.getID() !== 0) { ctRow.draw(L.lX+4, rowY+(searchMode&&e.rel?3:1), 1); drewItem = true; }
                     }
                 }
             } catch(_) {}
         }
-        if (!drewItem) {
+        if (!drewItem)
             drawImg(e.isDir ? I_FOLDER : (e.isJson ? I_JSON : I_MIG), L.lX+4, rowY+(searchMode&&e.rel?5:2), 15, 15, e.isDir, e.isJson);
-        }
+
         Renderer.drawString(buildLabel(e), L.lX+23, rowY+(searchMode&&e.rel?3:5), true);
         if (searchMode && e.rel)
             Renderer.drawString("&8» &7" + e.rel.replace(/\/$/, ""), L.lX+23, rowY+13, true);
-        if (hov && !e.isDir) {
+
+        // Draw trash + edit buttons only when this row is hovered
+        if (isHovRow && !e.isDir) {
             var tx   = L.lX + L.lW - 36;
-            var onT  = mx >= tx && mx <= tx+16 && my >= rowY && my <= rowY+rowH-2;
-            drawImg(onT ? I_TRASH_OPEN : I_TRASH, tx, rowY+Math.floor((rowH-15)/2), 15, 15, false, false, true);
             var ex   = L.lX + L.lW - 18;
-            var onE  = mx >= ex && mx <= ex+16 && my >= rowY && my <= rowY+rowH-2;
-            Renderer.drawRect(onE ? Renderer.color(60,40,100,230) : Renderer.color(30,22,55,180), ex, rowY+Math.floor((rowH-15)/2), 15, 15);
-            Renderer.drawRect(onE ? Renderer.color(120,80,200,255) : Renderer.color(80,55,140,180), ex, rowY+Math.floor((rowH-15)/2), 15, 1);
-            Renderer.drawRect(onE ? Renderer.color(120,80,200,255) : Renderer.color(80,55,140,180), ex, rowY+Math.floor((rowH-15)/2)+14, 15, 1);
-            Renderer.drawRect(onE ? Renderer.color(120,80,200,255) : Renderer.color(80,55,140,180), ex, rowY+Math.floor((rowH-15)/2), 1, 15);
-            Renderer.drawRect(onE ? Renderer.color(120,80,200,255) : Renderer.color(80,55,140,180), ex+14, rowY+Math.floor((rowH-15)/2), 1, 15);
-            Renderer.drawString(onE ? "&b\u270e" : "&8\u270e", ex+3, rowY+Math.floor((rowH-15)/2)+3, true);
+            var btnY = rowY + Math.floor((rowH - 15) / 2);
+
+            var onT = hit && hit.onTrash;
+            var onE = hit && hit.onEdit;
+
+            // Trash button — open/closed visual
+            Renderer.drawRect(onT ? Renderer.color(200,50,50,240) : Renderer.color(120,30,30,200), tx, btnY, 15, 15);
+            border1(tx, btnY, 15, 15, onT ? Renderer.color(255,80,80,255) : Renderer.color(180,50,50,200));
+            drawImg(onT ? I_TRASH_OPEN : I_TRASH, tx, btnY, 15, 15, false, false, true, onT);
+
+            // Edit button
+            Renderer.drawRect(onE ? Renderer.color(60,40,100,230) : Renderer.color(30,22,55,180), ex, btnY, 15, 15);
+            border1(ex, btnY, 15, 15, onE ? Renderer.color(120,80,200,255) : Renderer.color(80,55,140,180));
+            Renderer.drawString(onE ? "&b\u270e" : "&8\u270e", ex+3, btnY+3, true);
         }
+
         rowY += rowH + 1;
     }
 
@@ -440,9 +510,9 @@ gui.registerDraw(function(mx, my) {
     if (searchMode)                   drawBtn("\u00d7", L.pX+8, L.fY+4, 28, 18, mx, my, Renderer.color(160,55,55,200));
     drawBtn("\u27F3", L.pX+L.pW-26, L.fY+4, 20, 18, mx, my, Renderer.color(198,148,32,180));
 
-    var scaleLbl = Math.round(guiScale * 100) + "%";
-    var scaleBtnW = Renderer.getStringWidth(scaleLbl) + 14;
-    var scaleBtnX = L.pX + 42;
+    var scaleLbl    = Math.round(guiScale * 100) + "%";
+    var scaleBtnW   = Renderer.getStringWidth(scaleLbl) + 14;
+    var scaleBtnX   = L.pX + 42;
     var scaleBtnHov = mx >= scaleBtnX && mx <= scaleBtnX+scaleBtnW && my >= L.fY+4 && my <= L.fY+22;
     Renderer.drawRect(
         resizeMode ? Renderer.color(198,148,32,200) : (scaleBtnHov ? Renderer.color(50,53,80,230) : Renderer.color(28,30,50,200)),
@@ -450,13 +520,12 @@ gui.registerDraw(function(mx, my) {
     );
     border1(scaleBtnX, L.fY+4, scaleBtnW, 18, resizeMode ? GOLD : BORDER);
     Renderer.drawString("&f" + scaleLbl, scaleBtnX+7, L.fY+8, true);
-    if (resizeMode)
-        Renderer.drawString("&6scroll to resize", scaleBtnX+scaleBtnW+4, L.fY+8, true);
+    if (resizeMode) Renderer.drawString("&6scroll to resize", scaleBtnX+scaleBtnW+4, L.fY+8, true);
 
-    var visEnd  = Math.min(scrollTop + perPage, filtered.length);
-    var pStr    = filtered.length === 0 ? "&80" : "&7" + (scrollTop+1) + "&8\u2013&7" + visEnd + "&8/&7" + filtered.length;
-    var pRaw    = filtered.length === 0 ? "0" : (scrollTop+1) + "-" + visEnd + "/" + filtered.length;
-    var pStrX   = Math.floor(L.pX + L.pW/2) - Math.floor(Renderer.getStringWidth(pRaw)/2);
+    var visEnd = Math.min(scrollTop + perPage, filtered.length);
+    var pStr   = filtered.length === 0 ? "&80" : "&7"+(scrollTop+1)+"&8\u2013&7"+visEnd+"&8/&7"+filtered.length;
+    var pRaw   = filtered.length === 0 ? "0" : (scrollTop+1)+"-"+visEnd+"/"+filtered.length;
+    var pStrX  = Math.floor(L.pX + L.pW/2) - Math.floor(Renderer.getStringWidth(pRaw)/2);
     Renderer.drawString(pStr, pStrX, L.fY+8, true);
 
     drawPreviewPanel(mx, my);
@@ -470,8 +539,8 @@ function buildLabel(e) {
     if (!searchText) return "&f" + base + extC + ext;
     var qi = e.name.toLowerCase().indexOf(searchText.toLowerCase());
     if (qi === -1) return "&f" + base + extC + ext;
-    return "&f" + e.name.substring(0, qi) + "&6" + e.name.substring(qi, qi + searchText.length)
-         + "&r&f" + e.name.substring(qi + searchText.length).replace(/\.(mig|json)$/, "") + extC + ext;
+    return "&f" + e.name.substring(0, qi) + "&6" + e.name.substring(qi, qi+searchText.length)
+         + "&r&f" + e.name.substring(qi+searchText.length).replace(/\.(mig|json)$/,"") + extC + ext;
 }
 
 gui.registerClicked(function(mx, my, btn) {
@@ -482,6 +551,7 @@ gui.registerClicked(function(mx, my, btn) {
         return;
     }
     if (btn !== 0) return;
+
     if (mx >= L.fbX && mx <= L.fbX+L.fbW && my >= L.fbY && my <= L.fbY+L.fbH) { openFolder(); playClick(); return; }
     if (mx >= L.pX+2 && mx <= L.pX+L.pW && my >= L.pY && my <= L.pY+L.hH) {
         dragging = true; dOX = mx-(Math.floor(L.sw/2-L.pW/2)+pOX); dOY = my-(Math.floor(L.sh/2-L.pH/2)+pOY); return;
@@ -500,22 +570,25 @@ gui.registerClicked(function(mx, my, btn) {
     if (mx >= _scaleBtnX && mx <= _scaleBtnX+_scaleBtnW && my >= L.fY+4 && my <= L.fY+22) {
         resizeMode = !resizeMode; playClick(); return;
     }
-    if (hoverIdx >= 0 && hoverIdx < filtered.length) {
-        var e = filtered[hoverIdx];
-        if (!e.isDir) {
-            var tx = L.lX + L.lW - 36;
-            var ex = L.lX + L.lW - 18;
-            if (mx >= tx && mx <= tx+16) { delFile(e); return; }
-            if (mx >= ex && mx <= ex+16) {
-                var relPath = (e.rel || subDir) + e.name;
-                openFileInEditor(relPath);
-                return;
-            }
-            e.isJson ? loadJson(e) : loadMig(e);
-        } else {
-            subDir += e.name + "/"; previewCache = {}; refresh(); playClick();
-        }
+
+    // ── Row click — recalculate hit precisely at click coordinates ──────────
+    var hit = hitTestRows(mx, my);
+    if (!hit) return;
+
+    var e = hit.entry;
+    if (e.isDir) {
+        subDir += e.name + "/"; previewCache = {}; refresh(); playClick();
+        return;
     }
+
+    if (hit.onTrash) {
+        delFile(e); return;
+    }
+    if (hit.onEdit) {
+        openFileInEditor((e.rel || subDir) + e.name); return;
+    }
+    // Click on the row body — load the file
+    e.isJson ? loadJson(e) : loadMig(e);
 });
 
 register("guiMouseRelease", function() { dragging = false; });
@@ -523,7 +596,7 @@ register("guiMouseRelease", function() { dragging = false; });
 gui.registerKeyTyped(function(ch, code) {
     if (code === 1)  { gui.close(); return; }
     if (code === 14) {
-        if (searchText.length > 0) { searchText = searchText.slice(0, -1); filter(); }
+        if (searchText.length > 0) { searchText = searchText.slice(0,-1); filter(); }
         else { if (searchMode) { searchActive = false; filter(); } else if (subDir !== "") goUp(); }
         return;
     }
@@ -534,15 +607,13 @@ gui.registerKeyTyped(function(ch, code) {
 
 function loadMig(e) {
     var path = (e.rel || subDir) + e.name.replace(/\.mig$/, "");
-    lastPath = path;
-    gui.close();
+    lastPath = path; gui.close();
     setTimeout(function() { ChatLib.command("mm import " + path, true); }, 80);
 }
 
 function loadJson(e) {
     var path = (e.rel || subDir) + e.name.replace(/\.json$/, "");
-    lastPath = path;
-    gui.close();
+    lastPath = path; gui.close();
     setTimeout(function() { ChatLib.command("mm import " + path + ".json", true); }, 80);
 }
 
@@ -551,15 +622,9 @@ function openFileInEditor(path) {
         var base = new java.io.File(".").getCanonicalPath();
         var f    = new java.io.File(base + "/config/ChatTriggers/modules/Morgen/imports/" + path);
         if (f.exists()) {
-            if (java.awt.Desktop.isDesktopSupported()) {
-                java.awt.Desktop.getDesktop().open(f);
-                msg("&aOpened in external editor.");
-            } else {
-                msg("&cDesktop not supported on this OS.");
-            }
-        } else {
-            msg("&cFile not found: &e" + path);
-        }
+            if (java.awt.Desktop.isDesktopSupported()) { java.awt.Desktop.getDesktop().open(f); msg("&aOpened in external editor."); }
+            else msg("&cDesktop not supported on this OS.");
+        } else msg("&cFile not found: &e" + path);
     } catch(e) { msg("&cCould not open file: " + e); }
 }
 
@@ -591,10 +656,7 @@ function loadPos() {
         if (!r) return;
         var p = JSON.parse(r);
         pOX = p.x || 0; pOY = p.y || 0; guiScale = p.scale || 1.0;
-        if (Settings.saveSearchHistory && p.lastSearch) {
-            searchText = p.lastSearch;
-            filter();
-        }
+        if (Settings.saveSearchHistory && p.lastSearch) { searchText = p.lastSearch; filter(); }
     } catch(_) {}
 }
 
