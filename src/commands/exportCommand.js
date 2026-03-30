@@ -69,13 +69,18 @@ function detectItemType(registryName) {
 
 var loreClipboard = null;
 
+// FIX: Safe folder opener — java.awt.Desktop not available on iOS/headless systems
 function openImportsFolder() {
     try {
         var d = new java.io.File(new java.io.File(".").getCanonicalPath()
             + "/config/ChatTriggers/modules/Morgen/imports");
         if (!d.exists()) d.mkdirs();
-        java.awt.Desktop.getDesktop().open(d);
-        msg("&aOpened imports folder.");
+        if (java.awt.Desktop.isDesktopSupported()) {
+            java.awt.Desktop.getDesktop().open(d);
+            msg("&aOpened imports folder.");
+        } else {
+            msg("&cCannot open folder: Desktop not supported on this system.");
+        }
     } catch (e) { msg("&cCould not open folder: " + e); }
 }
 
@@ -114,11 +119,6 @@ function nbtLoreToLines(rawLoreArray) {
     });
 }
 
-// ─── NBT serialiser ───────────────────────────────────────────────────────────
-// CT's .toObject() turns Minecraft NBT lists into plain JS objects with numeric
-// string keys: {"0":{...},"1":{...}}.  We detect this pattern and emit the
-// Minecraft 1.8.9 /give list syntax:  [0:{...},1:{...}]
-
 function isNumericKeyedObject(obj) {
     if (!obj || typeof obj !== "object" || Array.isArray(obj)) return false;
     var keys = Object.keys(obj);
@@ -132,14 +132,12 @@ function buildNbtValue(obj) {
     if (typeof obj === "number")  return Number.isInteger(obj) ? String(obj) : obj.toFixed(4) + "f";
     if (typeof obj === "string")  return '"' + ("" + obj).replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
 
-    // Native JS array (built in code, not from .toObject())
     if (Array.isArray(obj)) {
         var items = obj.map(function(v, i) { return i + ":" + buildNbtValue(v); });
         return "[" + items.join(",") + "]";
     }
 
     if (typeof obj === "object") {
-        // Minecraft NBT list deserialized as numeric-keyed object
         if (isNumericKeyedObject(obj)) {
             var maxIdx = Math.max.apply(null, Object.keys(obj).map(Number));
             var parts = [];
@@ -149,7 +147,6 @@ function buildNbtValue(obj) {
             }
             return "[" + parts.join(",") + "]";
         }
-        // Regular compound tag
         var pairs = Object.keys(obj).map(function(k) {
             return k + ":" + buildNbtValue(obj[k]);
         });
@@ -158,17 +155,14 @@ function buildNbtValue(obj) {
     return "" + obj;
 }
 
-// Build the /give command directly from the raw tag (preserves everything)
 function buildGiveCommandFromRawTag(d) {
     var tag = d.rawTag || {};
 
-    // Rebuild compound so we control field order but copy everything verbatim
     var nbtObj = {};
 
     if (d.hideFlags)   nbtObj.HideFlags   = d.hideFlags;
     if (d.unbreakable) nbtObj.Unbreakable = 1;
 
-    // display — rebuild with corrected lore object
     var dispObj = {};
     if (d.name) dispObj.Name = ("" + d.name).replace(/&([0-9a-fk-or])/gi, "\u00a7$1");
     if (d.lore && d.lore.length > 0) {
@@ -182,7 +176,6 @@ function buildGiveCommandFromRawTag(d) {
         dispObj.color = parseInt(d.hex.replace("#", ""), 16);
     if (Object.keys(dispObj).length > 0) nbtObj.display = dispObj;
 
-    // enchantments
     var enchArr = (d.enchants || []).map(function(e) { return { id: e.id, lvl: e.lvl }; });
     if (d.glow) enchArr.push({ id: 0, lvl: 1 });
     if (enchArr.length > 0) {
@@ -193,15 +186,12 @@ function buildGiveCommandFromRawTag(d) {
 
     if (d.itemModel) nbtObj.ItemModel = d.itemModel;
 
-    // SkullOwner — copy entire raw compound (contains numeric-keyed textures array)
     if (d.itemId.indexOf("skull") !== -1 && tag.SkullOwner) {
         nbtObj.SkullOwner = tag.SkullOwner;
     }
 
-    // ExtraAttributes — copy verbatim
     if (tag.ExtraAttributes) nbtObj.ExtraAttributes = tag.ExtraAttributes;
 
-    // Any other top-level keys (AttributeModifiers, etc.)
     var handled = { HideFlags:1, Unbreakable:1, display:1, ench:1, ItemModel:1, SkullOwner:1, ExtraAttributes:1 };
     Object.keys(tag).forEach(function(k) {
         if (!handled[k]) nbtObj[k] = tag[k];
@@ -209,8 +199,6 @@ function buildGiveCommandFromRawTag(d) {
 
     return "/give @p " + d.itemId + " " + d.count + " " + d.damage + " " + buildNbtValue(nbtObj);
 }
-
-// ─── collectItemData ──────────────────────────────────────────────────────────
 
 function collectItemData(item) {
     try {
@@ -224,7 +212,6 @@ function collectItemData(item) {
             ? ("" + disp.Name).replace(/\u00a7/g, "&")
             : ("" + item.getName()).replace(/\u00a7/g, "&");
 
-        // Lore — .toObject() may give numeric-keyed obj or array
         var lore;
         if (disp.Lore) {
             var loreRaw = Array.isArray(disp.Lore)
@@ -243,7 +230,6 @@ function collectItemData(item) {
             });
         }
 
-        // Enchantments — may be numeric-keyed obj or array
         var allEnch = [];
         if (tag.ench) {
             allEnch = Array.isArray(tag.ench)
@@ -255,7 +241,6 @@ function collectItemData(item) {
         var hasGlow  = allEnch.some(function(e) { return e.id === 0 && e.lvl === 1; });
         var realEnch = allEnch.filter(function(e) { return !(e.id === 0 && e.lvl === 1); });
 
-        // Skull texture — textures list may be numeric-keyed obj or array
         var texture = null;
         if (id.indexOf("skull") !== -1 && tag.SkullOwner) {
             try {
@@ -289,7 +274,7 @@ function collectItemData(item) {
             enchants:    realEnch.map(function(e) { return { id: e.id, lvl: e.lvl, name: enchName(e.id) }; }),
             lore:        lore,
             stats:       {},
-            rawTag:      tag   // full raw tag — used by buildGiveCommand & .mig export
+            rawTag:      tag
         };
     } catch (e) {
         msg("&cFailed to read item data: " + e);
@@ -297,10 +282,6 @@ function collectItemData(item) {
         return null;
     }
 }
-
-// ─── .mig builder ─────────────────────────────────────────────────────────────
-// SkullOwner and ExtraAttributes are serialised as inline JSON on their own
-// keyed lines so giveCommand.js can pick them up on import.
 
 function buildCleanMig(d) {
     var out  = "";
@@ -361,12 +342,10 @@ function buildCleanMig(d) {
         out += '\n    ItemModel: "' + d.itemModel + '"\n';
     }
 
-    // ── SkullOwner — stored as JSON for lossless round-trip ──────────────
     if (d.itemId.indexOf("skull") !== -1 && tag.SkullOwner) {
         try { out += "\n    SkullOwnerJSON: " + JSON.stringify(tag.SkullOwner) + "\n"; } catch(_) {}
     }
 
-    // ── ExtraAttributes — stored as JSON for lossless round-trip ─────────
     if (tag.ExtraAttributes && Object.keys(tag.ExtraAttributes).length > 0) {
         try { out += "\n    ExtraAttributesJSON: " + JSON.stringify(tag.ExtraAttributes) + "\n"; } catch(_) {}
     }
@@ -379,6 +358,7 @@ function buildCleanMig(d) {
 
 function tryParse(str) { try { return JSON.parse(str); } catch(_) { return null; } }
 
+// FIX: Safe file opener
 function openMigFile(pathArg) {
     try {
         var base = new java.io.File(".").getCanonicalPath();
@@ -388,7 +368,9 @@ function openMigFile(pathArg) {
         if (java.awt.Desktop.isDesktopSupported()) {
             java.awt.Desktop.getDesktop().open(file);
             msg("&aOpened in external editor.");
-        } else { msg("&cDesktop not supported on this OS."); }
+        } else {
+            msg("&cCannot open file: Desktop not supported on this system.");
+        }
     } catch (e) { msg("&cCould not open file: " + e); }
 }
 
@@ -457,6 +439,15 @@ function exportInventory() {
     if (skipped > 0) msg("  &7Skipped  &8" + skipped);
     ChatLib.chat(ChatLib.addColor("&8&m──────────────────────────────"));
     if (Settings.autoOpenAfterExport) openImportsFolder();
+}
+
+// ─── getRecentItems helper (used in /mm recent) ───────────────────────────────
+function getRecentItems() {
+    try {
+        var r = FileLib.read("Morgen/config", "recent.json");
+        if (r) return JSON.parse(r);
+    } catch (_) {}
+    return [];
 }
 
 register("command", function() {
@@ -843,7 +834,6 @@ function jsonToMig(pathArg) {
     if (!d.stats)    d.stats    = {};
     if (d.amount === undefined) d.amount = 1;
     if (!d.enchants) d.enchants = [];
-    // Reconstitute rawTag so buildCleanMig picks up SkullOwner + ExtraAttributes
     d.rawTag = {};
     if (d.skullOwner)      d.rawTag.SkullOwner      = d.skullOwner;
     if (d.extraAttributes) d.rawTag.ExtraAttributes = d.extraAttributes;

@@ -1,5 +1,3 @@
-
-
 import { msg, cleanLore, stripColor } from "../../utils/utils";
 import Settings from "../../utils/config";
 
@@ -97,10 +95,13 @@ function heldItemRef() {
     };
 }
 
+// FIX: Safe clipboard — java.awt.Toolkit crashes on iOS/headless systems.
+// We wrap in try-catch and show a fallback message if it fails.
 function copyToClipboard(str) {
     try {
         var sel = Java.type("java.awt.datatransfer.StringSelection");
-        Java.type("java.awt.Toolkit").getDefaultToolkit().getSystemClipboard().setContents(new sel(str), null);
+        var toolkit = Java.type("java.awt.Toolkit").getDefaultToolkit();
+        toolkit.getSystemClipboard().setContents(new sel(str), null);
         return true;
     } catch(_) { return false; }
 }
@@ -262,7 +263,7 @@ export function handleAiCommand(args) {
         if (ref2 && !ref1) msg("  &8Using Ref2: &f" + ref2.name);
         callGemini(buildNamesPrompt(amount, theme), function(txt) {
             var allLines = cleanLines(txt)
-                .map(function(l) { return l.trim().replace(/\u00a7/g, "&"); }) // normalize § → &
+                .map(function(l) { return l.trim().replace(/\u00a7/g, "&"); })
                 .filter(function(l) { return l.length > 0; });
             var colored = allLines.filter(function(l) { return /^&[0-9a-fk-or]/i.test(l); });
             var names = (colored.length >= amount ? colored : allLines).slice(0, amount);
@@ -272,8 +273,12 @@ export function handleAiCommand(args) {
             div();
             var listStr  = names.map(function(n){return '"'+n.replace(/"/g,'\\"')+'"';}).join(", ");
             var listFull = "Name: list(" + listStr + ")";
-            copyToClipboard(listFull);
-            msg("&8Copied to clipboard: &7Name: list(...)");
+            var copied = copyToClipboard(listFull);
+            if (copied) {
+                msg("&8Copied to clipboard: &7Name: list(...)");
+            } else {
+                msg("&8Clipboard not available on this system.");
+            }
             var btn = new TextComponent(ChatLib.addColor("  &a[ ▶ Copy list() ]"));
             btn.setClick("suggest_command", listFull);
             btn.setHover("show_text", ChatLib.addColor("&7Click to fill chat with list()\n&8" + listFull.substring(0,60) + "..."));

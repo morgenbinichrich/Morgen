@@ -21,25 +21,16 @@ export function getNextEmptySlot(start) {
     const inv = Player.getInventory();
     if (!inv) return -1;
 
-    // CT inventory slot indices:
-    //   0-8  = hotbar (same items as packet slots 36-44)
-    //   9-35 = main inventory
-    // C10 creative packet slot indices:
-    //   36-44 = hotbar
-    //   9-35  = main inventory
-
     if (Settings.spawnIntoHotbar) {
-        // Search hotbar: read CT index 0-8, return packet slot 36-44
-        const baseIndex = (Settings.hotbarSlot || 1) - 1; // 0-based
+        const baseIndex = (Settings.hotbarSlot || 1) - 1;
         for (let offset = 0; offset < 9; offset++) {
-            const ctIndex    = (baseIndex + offset) % 9;   // CT read index
-            const packetSlot = 36 + ctIndex;               // C10 packet slot
+            const ctIndex    = (baseIndex + offset) % 9;
+            const packetSlot = 36 + ctIndex;
             try {
                 const s = inv.getStackInSlot(ctIndex);
                 if (!s || s.getID() === 0) return packetSlot;
             } catch (_) {}
         }
-        // All hotbar slots occupied — fall through to inventory
     }
 
     const lo = (start !== undefined && start > 9) ? start : 9;
@@ -49,15 +40,12 @@ export function getNextEmptySlot(start) {
     for (let i = 9; i < lo; i++) {
         try { const s = inv.getStackInSlot(i); if (!s || s.getID() === 0) return i; } catch (_) {}
     }
-    // Hotbar fallback (when not in hotbar mode and inventory is full)
     for (let i = 0; i <= 8; i++) {
         try { const s = inv.getStackInSlot(i); if (!s || s.getID() === 0) return 36 + i; } catch (_) {}
     }
     return -1;
 }
 
-// Detect numeric-keyed objects produced by CT's NBT.toObject() for MC lists
-// e.g. {"0":{Value:"..."},"1":{Value:"..."}}  →  [0:{Value:"..."},1:{Value:"..."}]
 function _isNumericKeyedObj(obj) {
     if (!obj || typeof obj !== "object" || Array.isArray(obj)) return false;
     var keys = Object.keys(obj);
@@ -72,10 +60,8 @@ export function buildNBTString(obj) {
         var s = "" + obj;
         return '"' + s.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
     }
-    // Native JS array
     if (Array.isArray(obj)) return "[" + obj.map(function(v, i) { return i + ":" + buildNBTString(v); }).join(",") + "]";
     if (typeof obj === "object") {
-        // Minecraft NBT list deserialized as numeric-keyed object
         if (_isNumericKeyedObj(obj)) {
             var maxIdx = Math.max.apply(null, Object.keys(obj).map(Number));
             var parts = [];
@@ -108,7 +94,6 @@ export function createItem(data) {
         const texture     = data.texture;
         const itemModel   = data.itemModel;
         const enchants    = data.enchants;
-        // New: full SkullOwner compound (from SkullOwnerJSON field) and ExtraAttributes
         const skullOwner      = data.skullOwner      || null;
         const extraAttributes = data.extraAttributes || null;
 
@@ -124,7 +109,6 @@ export function createItem(data) {
             ? slot : getNextEmptySlot();
         if (finalSlot === -1) { msg("&cNo empty slot available!"); return; }
 
-        // ── Build display compound ─────────────────────────────────────────
         const tagObj = {};
         const isLeather = id.toLowerCase().includes("leather");
         if (name || (lore && lore.length > 0) || (hex && isLeather)) {
@@ -138,27 +122,31 @@ export function createItem(data) {
         if (typeof hideFlags === "number" && hideFlags > 0)    tagObj.HideFlags   = hideFlags;
         if (typeof itemModel === "string" && itemModel.length) tagObj.ItemModel   = itemModel;
 
+        // FIX: Enchants + Glow — always merge both into one ench array
+        // Previously: if enchants existed AND glow=true, the glow enchant was silently dropped
+        // because the second `if (glow && !tagObj.ench)` branch never fired.
+        var enchList = [];
         if (enchants && enchants.length > 0) {
-            tagObj.ench = enchants.map(e => ({ id: e.id || 0, lvl: e.lvl || 1 }));
+            enchList = enchants.map(e => ({ id: e.id || 0, lvl: e.lvl || 1 }));
         }
-        if (glow && !tagObj.ench) {
-            tagObj.ench = [{ id: 0, lvl: 1 }];
+        if (glow) {
+            // Only add the fake glow enchant if it isn't already present
+            var hasGlow = enchList.some(function(e) { return e.id === 0 && e.lvl === 1; });
+            if (!hasGlow) enchList.push({ id: 0, lvl: 1 });
+        }
+        if (enchList.length > 0) {
+            tagObj.ench = enchList;
         }
 
         if (Settings.debugMode) {
             console.log("[createItem] tagObj.display.Name raw: " + JSON.stringify(tagObj.display && tagObj.display.Name));
         }
 
-        // ── Build NBT string ───────────────────────────────────────────────
         var nbtStr = buildNBTString(tagObj);
 
-        // ── SkullOwner injection ───────────────────────────────────────────
-        // Priority: full skullOwner compound > bare texture string
         if (id.toLowerCase().includes("skull")) {
             var skullNbt = "";
             if (skullOwner) {
-                // Serialise the full compound using buildNBTString so numeric-keyed
-                // texture arrays become [0:{Value:"..."}] as required by MC 1.8.9
                 skullNbt = "SkullOwner:" + buildNBTString(skullOwner);
             } else if (texture) {
                 var uuid = "" + java.util.UUID.randomUUID();
@@ -169,7 +157,6 @@ export function createItem(data) {
             }
         }
 
-        // ── ExtraAttributes injection ──────────────────────────────────────
         if (extraAttributes) {
             var eaNbt = "ExtraAttributes:" + buildNBTString(extraAttributes);
             nbtStr = nbtStr.slice(0, -1) + (nbtStr.length > 2 ? "," : "") + eaNbt + "}";

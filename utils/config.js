@@ -6,13 +6,19 @@ import {
     @ButtonProperty
 } from "Vigilance";
 
+// FIX: Safe folder opener — java.awt.Desktop crashes on iOS/headless systems.
+// Always check isDesktopSupported() before calling Desktop APIs.
 function openImportsFolder() {
     try {
         const base       = new java.io.File(".").getCanonicalPath();
         const importsDir = new java.io.File(base + "/config/ChatTriggers/modules/Morgen/imports");
         if (!importsDir.exists()) importsDir.mkdirs();
-        java.awt.Desktop.getDesktop().open(importsDir);
-        ChatLib.chat(ChatLib.addColor("&8[&6Morgen&8] &aOpened imports folder."));
+        if (java.awt.Desktop.isDesktopSupported()) {
+            java.awt.Desktop.getDesktop().open(importsDir);
+            ChatLib.chat(ChatLib.addColor("&8[&6Morgen&8] &aOpened imports folder."));
+        } else {
+            ChatLib.chat(ChatLib.addColor("&8[&6Morgen&8] &cCannot open folder: Desktop not supported on this system."));
+        }
     } catch (e) {
         ChatLib.chat(ChatLib.addColor("&8[&6Morgen&8] &cCould not open folder: " + e));
     }
@@ -268,9 +274,16 @@ class Settings {
         placeholder: "Open"
     })
     openGithub() {
+        // FIX: Safe Desktop browse — check support before calling
         try {
-            java.awt.Desktop.getDesktop().browse(new java.net.URI("https://github.com/morgenbinichrich/Morgen"));
-        } catch(_) {}
+            if (java.awt.Desktop.isDesktopSupported()) {
+                java.awt.Desktop.getDesktop().browse(new java.net.URI("https://github.com/morgenbinichrich/Morgen"));
+            } else {
+                ChatLib.chat(ChatLib.addColor("&8[&6Morgen&8] &7GitHub: &fhttps://github.com/morgenbinichrich/Morgen"));
+            }
+        } catch(_) {
+            ChatLib.chat(ChatLib.addColor("&8[&6Morgen&8] &7GitHub: &fhttps://github.com/morgenbinichrich/Morgen"));
+        }
     }
 
     @ButtonProperty({
